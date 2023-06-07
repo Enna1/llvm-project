@@ -62,6 +62,7 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
   case r600:           return "r600";
   case renderscript32: return "renderscript32";
   case renderscript64: return "renderscript64";
+  case remniwriscv64:  return "remniwriscv64";
   case riscv32:        return "riscv32";
   case riscv64:        return "riscv64";
   case shave:          return "shave";
@@ -163,6 +164,7 @@ StringRef Triple::getArchTypePrefix(ArchType Kind) {
   case wasm32:
   case wasm64:      return "wasm";
 
+  case remniwriscv64:
   case riscv32:
   case riscv64:     return "riscv";
 
@@ -337,6 +339,7 @@ Triple::ArchType Triple::getArchTypeForLLVMName(StringRef Name) {
     .Case("ppc64le", ppc64le)
     .Case("r600", r600)
     .Case("amdgcn", amdgcn)
+    .Case("remniwriscv64", remniwriscv64)
     .Case("riscv32", riscv32)
     .Case("riscv64", riscv64)
     .Case("hexagon", hexagon)
@@ -483,6 +486,7 @@ static Triple::ArchType parseArch(StringRef ArchName) {
            "mipsn32r6el", Triple::mips64el)
     .Case("r600", Triple::r600)
     .Case("amdgcn", Triple::amdgcn)
+    .Case("remniwriscv64", Triple::remniwriscv64)
     .Case("riscv32", Triple::riscv32)
     .Case("riscv64", Triple::riscv64)
     .Case("hexagon", Triple::hexagon)
@@ -841,6 +845,7 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
   case Triple::r600:
   case Triple::renderscript32:
   case Triple::renderscript64:
+  case Triple::remniwriscv64:
   case Triple::riscv32:
   case Triple::riscv64:
   case Triple::shave:
@@ -1453,6 +1458,7 @@ static unsigned getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
   case llvm::Triple::ppc64:
   case llvm::Triple::ppc64le:
   case llvm::Triple::renderscript64:
+  case llvm::Triple::remniwriscv64:
   case llvm::Triple::riscv64:
   case llvm::Triple::sparcv9:
   case llvm::Triple::spir64:
@@ -1487,6 +1493,7 @@ Triple Triple::get32BitArchVariant() const {
   case Triple::bpfeb:
   case Triple::bpfel:
   case Triple::msp430:
+  case Triple::remniwriscv64:
   case Triple::systemz:
   case Triple::ve:
     T.setArch(UnknownArch);
@@ -1596,6 +1603,7 @@ Triple Triple::get64BitArchVariant() const {
   case Triple::ppc64:
   case Triple::ppc64le:
   case Triple::renderscript64:
+  case Triple::remniwriscv64:
   case Triple::riscv64:
   case Triple::sparcv9:
   case Triple::spir64:

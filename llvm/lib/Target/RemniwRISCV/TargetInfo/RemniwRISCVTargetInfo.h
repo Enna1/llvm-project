@@ -1,0 +1,12 @@
+#ifndef LLVM_LIB_TARGET_REMNIWRISCV_TARGETINFO_REMNIWRISCVTARGETINFO_H
+#define LLVM_LIB_TARGET_REMNIWRISCV_TARGETINFO_REMNIWRISCVTARGETINFO_H
+
+namespace llvm {
+
+class Target;
+
+Target &getRemniwRISCV64Target();
+
+} // end namespace llvm
+
+#endif
