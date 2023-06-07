@@ -9,4 +9,4 @@ Target &getRemniwRISCV64Target();
 
 } // end namespace llvm
 
-#endif
+#endif // LLVM_LIB_TARGET_REMNIWRISCV_TARGETINFO_REMNIWRISCVTARGETINFO_H
