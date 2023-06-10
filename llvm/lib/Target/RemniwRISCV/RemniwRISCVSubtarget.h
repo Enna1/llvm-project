@@ -22,7 +22,7 @@ class RemniwRISCVSubtarget : public RemniwRISCVGenSubtargetInfo {
 
 public:
   RemniwRISCVSubtarget(const Triple &TT, StringRef CPU, StringRef TuneCPU,
-                       StringRef FS, RemniwRISCVTargetMachine &TM);
+                       StringRef FS, const TargetMachine &TM);
 
   const RemniwRISCVTargetLowering *getTargetLowering() const override {
     return &TLInfo;

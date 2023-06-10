@@ -22,7 +22,8 @@ class RemniwRISCVTargetLowering : public TargetLowering {
   const RemniwRISCVSubtarget &Subtarget;
 
 public:
-  explicit RemniwRISCVTargetLowering(RemniwRISCVTargetMachine &TM);
+  explicit RemniwRISCVTargetLowering(const TargetMachine &TM,
+                                     const RemniwRISCVSubtarget &STI);
 
   const char *getTargetNodeName(unsigned Opcode) const override;
 

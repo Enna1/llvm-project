@@ -37,6 +37,7 @@ add_llvm_target(RemniwRISCVCodeGen
   SelectionDAG
   Support
   Target
+  TargetParser
 
   ADD_TO_COMPONENT
   RemniwRISCV

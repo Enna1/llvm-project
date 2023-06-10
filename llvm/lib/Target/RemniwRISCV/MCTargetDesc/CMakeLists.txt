@@ -7,6 +7,7 @@ add_llvm_component_library(LLVMRemniwRISCVDesc
   MC
   RemniwRISCVInfo
   Support
+  TargetParser
 
   ADD_TO_COMPONENT
   RemniwRISCV

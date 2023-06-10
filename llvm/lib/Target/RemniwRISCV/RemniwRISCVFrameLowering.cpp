@@ -9,6 +9,7 @@ void RemniwRISCVFrameLowering::emitPrologue(MachineFunction &MF,
 void RemniwRISCVFrameLowering::emitEpilogue(MachineFunction &MF,
                                             MachineBasicBlock &MBB) const {}
 
+// FIXME
 bool RemniwRISCVFrameLowering::hasFP(const MachineFunction &MF) const {
   return false;
 }

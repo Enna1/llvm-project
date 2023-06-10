@@ -41,7 +41,9 @@ let RegAltNameIndices = [ABIRegAltName] in {
   def X31 : RemniwRISCVReg<31, "x31", ["t6"]>;
 }
 
-def GPR : RegisterClass<"RemniwRISCV", [i32], 32, (add
+// The order of registers represents the preferred allocation sequence.
+// Registers are listed in the order caller-save, callee-save, specials.
+def GPR : RegisterClass<"RemniwRISCV", /*XLenVT for RV64*/ [i64], /*alignment*/ 64, (add
   (sequence "X%u", 10, 17),
   (sequence "X%u", 5, 7),
   (sequence "X%u", 28, 31),

@@ -9,9 +9,9 @@ using namespace llvm;
 #include "RemniwRISCVGenCallingConv.inc"
 
 RemniwRISCVTargetLowering::RemniwRISCVTargetLowering(
-    RemniwRISCVTargetMachine &TM)
-    : TargetLowering(TM), Subtarget(*TM.getSubtargetImpl()) {
-  addRegisterClass(MVT::i32, &RemniwRISCV::GPRRegClass);
+    const TargetMachine &TM, const RemniwRISCVSubtarget &STI)
+    : TargetLowering(TM), Subtarget(STI) {
+  addRegisterClass(MVT::i64, &RemniwRISCV::GPRRegClass);
   computeRegisterProperties(Subtarget.getRegisterInfo());
 }
 

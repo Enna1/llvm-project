@@ -11,8 +11,8 @@ using namespace llvm;
 
 RemniwRISCVSubtarget::RemniwRISCVSubtarget(const Triple &TT, StringRef CPU,
                                            StringRef TuneCPU, StringRef FS,
-                                           RemniwRISCVTargetMachine &TM)
-    : RemniwRISCVGenSubtargetInfo(TT, CPU, TuneCPU, FS), TLInfo(TM),
+                                           const TargetMachine &TM)
+    : RemniwRISCVGenSubtargetInfo(TT, CPU, TuneCPU, FS), TLInfo(TM, *this),
       FrameLowering(initializeSubtargetDependencies(TT, CPU, FS)),
       InstrInfo(*this), RegInfo(getHwMode()) {}
 

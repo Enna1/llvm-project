@@ -22,10 +22,11 @@ RemniwRISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
 BitVector
 RemniwRISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
-  Reserved.set(RemniwRISCV::X0);
-  Reserved.set(RemniwRISCV::X2);
-  Reserved.set(RemniwRISCV::X3);
-  Reserved.set(RemniwRISCV::X4);
+  Reserved.set(RemniwRISCV::X0); // zero
+  Reserved.set(RemniwRISCV::X2); // sp
+  Reserved.set(RemniwRISCV::X3); // gp
+  Reserved.set(RemniwRISCV::X4); // tp
+  Reserved.set(RemniwRISCV::X8); // fp
   return Reserved;
 }
 
