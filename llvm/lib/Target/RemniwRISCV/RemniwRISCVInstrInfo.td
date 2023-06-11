@@ -24,34 +24,52 @@ def ADDI : RV64 {
   let Inst{6-0} = 0b0010011;
 }
 
-def ADD : RV64 {
+def ADDW : RV64 {
   let OutOperandList = (outs GPR:$rd);
   let InOperandList = (ins GPR:$rs1, GPR:$rs2);
-  let AsmString = "addi $rd, $rs1, $imm12";
-  let Pattern = [(set GPR:$rd, (add GPR:$rs1, simm12:$imm12))];
+  let AsmString = "addw $rd, $rs1, $rs2";
+  let Pattern = [(set GPR:$rd, (add GPR:$rs1, GPR:$rs2))];
   bits<5> rd;
   bits<5> rs1;
-  bits<12> imm12;
-  let Inst{31-20} = imm12;
+  bits<5> rs2;
+  let Inst{31-25} = 0b0000000;
+  let Inst{24-20} = rs2;
   let Inst{19-15} = rs1;
   let Inst{14-12} = 0b000;
   let Inst{11-7} = rd;
-  let Inst{6-0} = 0b0010011;
+  let Inst{6-0} = 0b0111011;
 }
 
-def ADD : RV64 {
+def SUBW : RV64 {
   let OutOperandList = (outs GPR:$rd);
   let InOperandList = (ins GPR:$rs1, GPR:$rs2);
-  let AsmString = "addi $rd, $rs1, $imm12";
-  let Pattern = [(set GPR:$rd, (add GPR:$rs1, simm12:$imm12))];
+  let AsmString = "subw $rd, $rs1, $rs2";
+  let Pattern = [(set GPR:$rd, (sub GPR:$rs1, GPR:$rs2))];
   bits<5> rd;
   bits<5> rs1;
-  bits<12> imm12;
-  let Inst{31-20} = imm12;
+  bits<5> rs2;
+  let Inst{31-25} = 0b0100000;
+  let Inst{24-20} = rs2;
   let Inst{19-15} = rs1;
   let Inst{14-12} = 0b000;
   let Inst{11-7} = rd;
-  let Inst{6-0} = 0b0010011;
+  let Inst{6-0} = 0b0111011;
+}
+
+def DIVW : RV64 {
+  let OutOperandList = (outs GPR:$rd);
+  let InOperandList = (ins GPR:$rs1, GPR:$rs2);
+  let AsmString = "mul $rd, $rs1, $rs2";
+  let Pattern = [(set GPR:$rd, (sdiv GPR:$rs1, GPR:$rs2))];
+  bits<5> rd;
+  bits<5> rs1;
+  bits<5> rs2;
+  let Inst{31-25} = 0b0000001;
+  let Inst{24-20} = rs2;
+  let Inst{19-15} = rs1;
+  let Inst{14-12} = 0b100;
+  let Inst{11-7} = rd;
+  let Inst{6-0} = 0b0110011;
 }
 
 def JALR : RV64 {
