@@ -9,6 +9,8 @@ def RemniwRISCVRetFlag : SDNode<"RemniwRISCVISD::RET_FLAG", SDTNone,
 
 def simm12 : Operand<i64>, ImmLeaf<i64, [{return isInt<12>(Imm);}]>;
 
+/// Arithmetic Instructions
+
 def ADDI : RV64 {
   let OutOperandList = (outs GPR:$rd);
   let InOperandList = (ins GPR:$rs1, simm12:$imm12);
@@ -71,6 +73,42 @@ def DIVW : RV64 {
   let Inst{11-7} = rd;
   let Inst{6-0} = 0b0110011;
 }
+
+/// Load and Store instructions
+
+def LD : RV64 {
+  let OutOperandList = (outs GPR:$rd);
+  let InOperandList = (ins GPR:$rs1, simm12:$imm12);
+  let AsmString = "ld $rd, ${imm12}(${rs1})";
+  let Pattern = [];
+  bits<5> rd;
+  bits<5> rs1;
+  bits<12> imm12;
+  let Inst{31-20} = imm12;
+  let Inst{19-15} = rs1;
+  let Inst{14-12} = 0b011;
+  let Inst{11-7} = rd;
+  let Inst{6-0} = 0b0000011;
+}
+
+def SD : RV64 {
+  let OutOperandList = (outs);
+  let InOperandList = (ins GPR:$rs2, GPR:$rs1, simm12:$imm12);
+  let AsmString = "sd $rs2, ${imm12}(${rs1})";
+  let Pattern = [];
+  bits<5> rs2;
+  bits<5> rs1;
+  bits<12> imm12;
+  let Inst{31-25} = imm12{11-5};
+  let Inst{24-20} = rs2;
+  let Inst{19-15} = rs1;
+  let Inst{14-12} = funct3;
+  let Inst{11-7} = imm12{4-0};
+  let Inst{6-0} = 0b0100011;
+}
+
+def : InstAlias<"li $rd, $imm",  (ADDI GPR:$rd, X0, simm12:$imm)>;
+def : InstAlias<"mv $rd, $rs",   (ADDI GPR:$rd, GPR:$rs,       0)>;
 
 def JALR : RV64 {
   let OutOperandList = (outs GPR:$rd);
