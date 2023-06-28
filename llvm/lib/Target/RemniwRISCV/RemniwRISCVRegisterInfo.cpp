@@ -2,6 +2,7 @@
 #include "MCTargetDesc/RemniwRISCVMCTargetDesc.h"
 #include "RemniwRISCVFrameLowering.h"
 #include "RemniwRISCVSubtarget.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 
 #define GET_REGINFO_TARGET_DESC
@@ -31,9 +32,29 @@ RemniwRISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 }
 
 bool RemniwRISCVRegisterInfo::eliminateFrameIndex(
-    MachineBasicBlock::iterator MI, int SPAdj, unsigned FIOperandNum,
+    MachineBasicBlock::iterator II, int SPAdj, unsigned FIOperandNum,
     RegScavenger *RS) const {
-  return false;
+  assert(SPAdj == 0 && "Unexpected non-zero SPAdj value");
+
+  MachineInstr &MI = *II;
+  MachineFunction &MF = *MI.getParent()->getParent();
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
+  const RemniwRISCVSubtarget &ST = MF.getSubtarget<RemniwRISCVSubtarget>();
+  DebugLoc DL = MI.getDebugLoc();
+
+  int FrameIndex = MI.getOperand(FIOperandNum).getIndex();
+  Register FrameReg = RemniwRISCV::X2;
+  int64_t Offset = MFI.getObjectOffset(FrameIndex) + MFI.getStackSize() +
+                   MI.getOperand(FIOperandNum + 1).getImm();
+
+  // FIXME: check the range of offset.
+  MI.getOperand(FIOperandNum)
+      .ChangeToRegister(FrameReg, /*IsDef*/ false,
+                        /*IsImp*/ false,
+                        /*IsKill*/ false);
+  MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset);
+  return true;
 }
 
 Register

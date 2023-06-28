@@ -2,6 +2,7 @@
 #include "RemniwRISCV.h"
 #include "RemniwRISCVTargetMachine.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
+#include <llvm/Support/MachineValueType.h>
 
 using namespace llvm;
 
@@ -21,6 +22,10 @@ public:
 
   void Select(SDNode *N) override;
 
+  bool SelectAddrFrameIndex(SDValue Addr, SDValue &Base, SDValue &Offset);
+  bool SelectFrameAddrRegImm(SDValue Addr, SDValue &Base, SDValue &Offset);
+  bool SelectAddrRegImm(SDValue Addr, SDValue &Base, SDValue &Offset);
+
 private:
 #include "RemniwRISCVGenDAGISel.inc"
 };
@@ -34,9 +39,9 @@ void RemniwRISCVDAGToDAGISel::Select(SDNode *N) {
   case ISD::Constant: {
     int64_t Imm = cast<ConstantSDNode>(N)->getSExtValue();
     if (-2048 <= Imm && Imm <= 2047) {
-      SDValue SDImm = CurDAG->getTargetConstant(Imm, DL, MVT::i32);
-      SDValue SrcReg = CurDAG->getRegister(RemniwRISCV::X0, MVT::i32);
-      SDNode *Result = CurDAG->getMachineNode(RemniwRISCV::ADDI, DL, MVT::i32,
+      SDValue SDImm = CurDAG->getTargetConstant(Imm, DL, MVT::i64);
+      SDValue SrcReg = CurDAG->getRegister(RemniwRISCV::X0, MVT::i64);
+      SDNode *Result = CurDAG->getMachineNode(RemniwRISCV::ADDI, DL, MVT::i64,
                                               SrcReg, SDImm);
       ReplaceNode(N, Result);
       return;
@@ -45,6 +50,38 @@ void RemniwRISCVDAGToDAGISel::Select(SDNode *N) {
   }
 
   SelectCode(N);
+}
+
+bool RemniwRISCVDAGToDAGISel::SelectAddrFrameIndex(SDValue Addr, SDValue &Base,
+                                                   SDValue &Offset) {
+  if (auto *FIN = dyn_cast<FrameIndexSDNode>(Addr)) {
+    Base = CurDAG->getTargetFrameIndex(FIN->getIndex(),
+                                       /*XLenVT for RV64*/ MVT::i64);
+    Offset =
+        CurDAG->getTargetConstant(0, SDLoc(Addr), /*XLenVT for RV64*/ MVT::i64);
+    return true;
+  }
+
+  return false;
+}
+
+// Select a frame index and an optional immediate offset from an ADD or OR.
+bool RemniwRISCVDAGToDAGISel::SelectFrameAddrRegImm(SDValue Addr, SDValue &Base,
+                                                    SDValue &Offset) {
+  if (SelectAddrFrameIndex(Addr, Base, Offset))
+    return true;
+
+  // TODO
+  return false;
+}
+
+bool RemniwRISCVDAGToDAGISel::SelectAddrRegImm(SDValue Addr, SDValue &Base,
+                                               SDValue &Offset) {
+  if (SelectAddrFrameIndex(Addr, Base, Offset))
+    return true;
+
+  // TODO
+  return false;
 }
 
 FunctionPass *llvm::createRemniwRISCVISelDag(RemniwRISCVTargetMachine &TM,

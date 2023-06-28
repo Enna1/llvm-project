@@ -9,7 +9,7 @@ void RemniwRISCVFrameLowering::emitPrologue(MachineFunction &MF,
 void RemniwRISCVFrameLowering::emitEpilogue(MachineFunction &MF,
                                             MachineBasicBlock &MBB) const {}
 
-// FIXME
+// Disable frame pointer elimination by default
 bool RemniwRISCVFrameLowering::hasFP(const MachineFunction &MF) const {
-  return false;
+  return true;
 }
