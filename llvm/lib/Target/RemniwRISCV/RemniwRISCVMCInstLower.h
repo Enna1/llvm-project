@@ -17,10 +17,9 @@ class RemniwRISCVMCInstLower {
 public:
   RemniwRISCVMCInstLower(MCContext &Ctx, AsmPrinter &Printer);
 
-  void Lower(const MachineInstr *MI, MCInst &OutMI) const;
+  void lower(const MachineInstr *MI, MCInst &OutMI) const;
 
-private:
-  bool LowerOperand(const MachineOperand &MO, MCOperand &MCOp) const;
+  bool lowerOperand(const MachineOperand &MO, MCOperand &MCOp) const;
 };
 
 } // end namespace llvm

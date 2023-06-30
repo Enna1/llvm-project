@@ -12,19 +12,19 @@ RemniwRISCVMCInstLower::RemniwRISCVMCInstLower(MCContext &Ctx,
                                                AsmPrinter &Printer)
     : Ctx(Ctx), Printer(Printer) {}
 
-void RemniwRISCVMCInstLower::Lower(const MachineInstr *MI,
+void RemniwRISCVMCInstLower::lower(const MachineInstr *MI,
                                    MCInst &OutMI) const {
   OutMI.setOpcode(MI->getOpcode());
 
   for (const MachineOperand &MO : MI->operands()) {
     MCOperand MCOp;
-    if (LowerOperand(MO, MCOp)) {
+    if (lowerOperand(MO, MCOp)) {
       OutMI.addOperand(MCOp);
     }
   }
 }
 
-bool RemniwRISCVMCInstLower::LowerOperand(const MachineOperand &MO,
+bool RemniwRISCVMCInstLower::lowerOperand(const MachineOperand &MO,
                                           MCOperand &MCOp) const {
   switch (MO.getType()) {
   case MachineOperand::MO_Register:
@@ -35,6 +35,10 @@ bool RemniwRISCVMCInstLower::LowerOperand(const MachineOperand &MO,
     break;
   case MachineOperand::MO_Immediate:
     MCOp = MCOperand::createImm(MO.getImm());
+    break;
+  case MachineOperand::MO_MachineBasicBlock:
+    MCOp = MCOperand::createExpr(
+        MCSymbolRefExpr::create(MO.getMBB()->getSymbol(), Ctx));
     break;
   default:
     llvm_unreachable("Unknown operand type!");

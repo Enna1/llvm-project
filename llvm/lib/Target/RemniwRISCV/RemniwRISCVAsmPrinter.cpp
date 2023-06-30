@@ -19,6 +19,11 @@ public:
 
   void emitInstruction(const MachineInstr *MI) override;
 
+  // Wrapper needed for tblgenned pseudo lowering.
+  bool lowerOperand(const MachineOperand &MO, MCOperand &MCOp) const {
+    return MCInstLowering.lowerOperand(MO, MCOp);
+  }
+
 private:
   bool emitPseudoExpansionLowering(MCStreamer &OutStreamer,
                                    const MachineInstr *MI);
@@ -34,7 +39,7 @@ void RemniwRISCVAsmPrinter::emitInstruction(const MachineInstr *MI) {
   }
 
   MCInst TmpInst;
-  MCInstLowering.Lower(MI, TmpInst);
+  MCInstLowering.lower(MI, TmpInst);
   EmitToStreamer(*OutStreamer, TmpInst);
 }
 
