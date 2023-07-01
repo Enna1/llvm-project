@@ -17,7 +17,7 @@ RemniwRISCVRegisterInfo::RemniwRISCVRegisterInfo(unsigned HwMode)
 
 const MCPhysReg *
 RemniwRISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
-  return CC_Save_SaveList;
+  return CSR_SaveList;
 }
 
 BitVector
@@ -60,4 +60,13 @@ bool RemniwRISCVRegisterInfo::eliminateFrameIndex(
 Register
 RemniwRISCVRegisterInfo::getFrameRegister(const MachineFunction &MF) const {
   return RemniwRISCV::X8;
+}
+
+const uint32_t *
+RemniwRISCVRegisterInfo::getCallPreservedMask(const MachineFunction & /*MF*/,
+                                              CallingConv::ID /*CC*/) const {
+
+  // CSR defined in RemniwRISCVCallingConv.td, CSR_RegMask defined in
+  // RemniwRISCVGenRegisterInfo.inc
+  return CSR_RegMask;
 }

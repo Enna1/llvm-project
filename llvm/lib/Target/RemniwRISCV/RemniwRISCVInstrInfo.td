@@ -5,14 +5,35 @@ def FrameAddrRegImm : ComplexPattern<iPTR, 2, "SelectFrameAddrRegImm",
 def AddrRegImm : ComplexPattern<iPTR, 2, "SelectAddrRegImm">;
 
 // Instructions
-class RV64 : Instruction {
+class RVInst : Instruction {
   let Size = 4;
   let Namespace = "RemniwRISCV";
   bits<32> Inst;
 }
 
-def RemniwRISCVRetFlag : SDNode<"RemniwRISCVISD::RET_FLAG", SDTNone,
+// Target-independent type requirements, but with target-specific formats.
+def SDT_CallSeqStart : SDCallSeqStart<[SDTCisVT<0, i32>,
+                                       SDTCisVT<1, i32>]>;
+def SDT_CallSeqEnd   : SDCallSeqEnd<[SDTCisVT<0, i32>,
+                                     SDTCisVT<1, i32>]>;
+
+// Target-dependent type requirements.
+def SDT_RemniwRISCVCall     : SDTypeProfile<0, -1, [SDTCisVT<0, /*XLenVT for RV64*/i64>]>;
+
+// Target-independent nodes, but with target-specific formats.
+def callseq_start : SDNode<"ISD::CALLSEQ_START", SDT_CallSeqStart,
+                           [SDNPHasChain, SDNPOutGlue]>;
+def callseq_end   : SDNode<"ISD::CALLSEQ_END", SDT_CallSeqEnd,
+                           [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue]>;
+
+// Target-dependent nodes.
+def remniwriscv_call : SDNode<"RemniwISD::CALL", SDT_RemniwRISCVCall,
+                              [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue,
+                               SDNPVariadic]>;
+
+def remniwriscv_ret_flag : SDNode<"RemniwRISCVISD::RET_FLAG", SDTNone,
                                 [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
+
 
 def simm12 : Operand<i64>, ImmLeaf<i64, [{return isInt<12>(Imm);}]>;
 
@@ -23,9 +44,21 @@ def simm12 : Operand<i64>, ImmLeaf<i64, [{return isInt<12>(Imm);}]>;
 def simm21_lsb0_jal : Operand<OtherVT>;
 def simm13_lsb0 : Operand<OtherVT>;
 
+// Pessimistically assume the stack pointer will be clobbered
+// Note: i32imm defined in Target.td, timm defined in TargetSelectionDAG.td
+// FIXME: why need this ?
+/*
+let Defs = [X2], Uses = [X2], isPseudo = 1, isCodeGenOnly = 1  in {
+def ADJCALLSTACKDOWN : RVInst<(outs), (ins i32imm:$amt1, i32imm:$amt2),
+                              [(callseq_start timm:$amt1, timm:$amt2)]>;
+def ADJCALLSTACKUP   : RVInst<(outs), (ins i32imm:$amt1, i32imm:$amt2),
+                              [(callseq_end timm:$amt1, timm:$amt2)]>;
+} // Defs = [X2], Uses = [X2]
+*/
+
 /// Arithmetic Instructions
 
-def ADDI : RV64 {
+def ADDI : RVInst {
   let OutOperandList = (outs GPR:$rd);
   let InOperandList = (ins GPR:$rs1, simm12:$imm12);
   let AsmString = "addi $rd, $rs1, $imm12";
@@ -40,7 +73,7 @@ def ADDI : RV64 {
   let Inst{6-0} = 0b0010011;
 }
 
-def ADD : RV64 {
+def ADD : RVInst {
   let OutOperandList = (outs GPR:$rd);
   let InOperandList = (ins GPR:$rs1, GPR:$rs2);
   let AsmString = "add $rd, $rs1, $rs2";
@@ -56,7 +89,7 @@ def ADD : RV64 {
   let Inst{6-0} = 0b0110011; // op
 }
 
-def SUB : RV64 {
+def SUB : RVInst {
   let OutOperandList = (outs GPR:$rd);
   let InOperandList = (ins GPR:$rs1, GPR:$rs2);
   let AsmString = "sub $rd, $rs1, $rs2";
@@ -72,7 +105,7 @@ def SUB : RV64 {
   let Inst{6-0} = 0b0110011; // op
 }
 
-def MUL : RV64 {
+def MUL : RVInst {
   let OutOperandList = (outs GPR:$rd);
   let InOperandList = (ins GPR:$rs1, GPR:$rs2);
   let AsmString = "mul $rd, $rs1, $rs2";
@@ -88,7 +121,7 @@ def MUL : RV64 {
   let Inst{6-0} = 0b0110011; // op
 }
 
-def DIV : RV64 {
+def DIV : RVInst {
   let OutOperandList = (outs GPR:$rd);
   let InOperandList = (ins GPR:$rs1, GPR:$rs2);
   let AsmString = "div $rd, $rs1, $rs2";
@@ -106,7 +139,7 @@ def DIV : RV64 {
 
 /// Load and Store instructions
 
-def LD : RV64 {
+def LD : RVInst {
   let OutOperandList = (outs GPR:$rd);
   let InOperandList = (ins GPR:$rs1, simm12:$imm12);
   let AsmString = "ld $rd, ${imm12}(${rs1})";
@@ -121,7 +154,7 @@ def LD : RV64 {
   let Inst{6-0} = 0b0000011;
 }
 
-def SD : RV64 {
+def SD : RVInst {
   let OutOperandList = (outs);
   let InOperandList = (ins GPR:$rs2, GPR:$rs1, simm12:$imm12);
   let AsmString = "sd $rs2, ${imm12}(${rs1})";
@@ -150,7 +183,7 @@ def : InstAlias<"mv $rd, $rs",   (ADDI GPR:$rd, GPR:$rs, 0)>;
 // def BEQ  : BranchCC_rri<0b000, "beq">;
 // def BNE  : BranchCC_rri<0b001, "bne">;
 
-def BLT : RV64 {
+def BLT : RVInst {
   let OutOperandList = (outs);
   let InOperandList = (ins GPR:$rs1, GPR:$rs2, simm13_lsb0:$imm12);
   let AsmString = "blt $rs1, $rs2, $imm12";
@@ -177,7 +210,7 @@ def : Pat<(brcc SETLT, GPR:$rs1, GPR:$rs2, bb:$imm12),
 def : Pat<(brcc SETLT, GPR:$rs1, 0, bb:$imm12),
             (BLT GPR:$rs1, X0, simm13_lsb0:$imm12)>;
 
-def JAL : RV64 {
+def JAL : RVInst {
   let OutOperandList = (outs GPR:$rd);
   let InOperandList = (ins simm21_lsb0_jal:$imm20);
   let AsmString = "jal $rd, $imm20";
@@ -193,7 +226,7 @@ def JAL : RV64 {
 
 def : InstAlias<"j $offset",   (JAL X0, simm21_lsb0_jal:$offset)>;
 
-def PseudoBR : RV64, PseudoInstExpansion<(JAL X0, simm21_lsb0_jal:$imm20)> {
+def PseudoBR : RVInst, PseudoInstExpansion<(JAL X0, simm21_lsb0_jal:$imm20)> {
     let OutOperandList = (outs);
     let InOperandList = (ins simm21_lsb0_jal:$imm20);
     // Note: bb is a SelectionDAG node defined in TargetSelectionDAG.td
@@ -203,7 +236,7 @@ def PseudoBR : RV64, PseudoInstExpansion<(JAL X0, simm21_lsb0_jal:$imm20)> {
     let isTerminator = 1;
 }
 
-def JALR : RV64 {
+def JALR : RVInst {
   let OutOperandList = (outs GPR:$rd);
   let InOperandList = (ins GPR:$rs1, simm12:$imm12);
   let AsmString = "jalr $rd, ${imm12}(${rs1})";
@@ -220,10 +253,10 @@ def JALR : RV64 {
 
 def : InstAlias<"ret", (JALR X0, X1, 0), 4>;
 
-def PseudoRET : RV64, PseudoInstExpansion<(JALR X0, X1, 0)> {
+def PseudoRET : RVInst, PseudoInstExpansion<(JALR X0, X1, 0)> {
     let OutOperandList = (outs);
     let InOperandList = (ins);
-    let Pattern = [(RemniwRISCVRetFlag)];
+    let Pattern = [(remniwriscv_ret_flag)];
     let isPseudo = 1;
     let isReturn = 1;
     let isTerminator = 1;

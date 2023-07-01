@@ -21,4 +21,4 @@ def CC_RemniwRISCV : CallingConv<[
   CCIfType<[i64], CCAssignToStack<8, 8>>
 ]>;
 
-def CC_Save : CalleeSavedRegs<(add X2, X8, X9, (sequence "X%u", 18, 27))>;
+def CSR : CalleeSavedRegs<(add X2, X8, X9, (sequence "X%u", 18, 27))>;

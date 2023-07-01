@@ -13,7 +13,11 @@ namespace RemniwRISCVISD {
 
 enum NodeType {
   FIRST_NUMBER = ISD::BUILTIN_OP_END,
+  // Return with a flag operand. Operand 0 is the chain operand.
   RET_FLAG,
+  // CALL - These operations represent an abstract call instruction, which
+  // includes a bunch of information.
+  CALL,
 };
 
 } // namespace RemniwRISCVISD
@@ -26,6 +30,9 @@ public:
                                      const RemniwRISCVSubtarget &STI);
 
   const char *getTargetNodeName(unsigned Opcode) const override;
+
+  SDValue LowerCall(TargetLowering::CallLoweringInfo &CLI,
+                    SmallVectorImpl<SDValue> &InVals) const override;
 
   SDValue LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv,
                                bool IsVarArg,
