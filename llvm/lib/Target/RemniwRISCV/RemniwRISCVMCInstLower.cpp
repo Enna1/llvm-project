@@ -40,6 +40,13 @@ bool RemniwRISCVMCInstLower::lowerOperand(const MachineOperand &MO,
     MCOp = MCOperand::createExpr(
         MCSymbolRefExpr::create(MO.getMBB()->getSymbol(), Ctx));
     break;
+  case MachineOperand::MO_GlobalAddress:
+    MCOp = MCOperand::createExpr(
+        MCSymbolRefExpr::create(Printer.getSymbol(MO.getGlobal()), Ctx));
+    break;
+  case MachineOperand::MO_RegisterMask:
+    // Regmasks are like implicit defs.
+    return false;
   default:
     llvm_unreachable("Unknown operand type!");
   }

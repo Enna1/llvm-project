@@ -1,8 +1,8 @@
 include "llvm/Target/Target.td"
 
 include "RemniwRISCVRegisterInfo.td"
-include "RemniwRISCVInstrInfo.td"
 include "RemniwRISCVCallingConv.td"
+include "RemniwRISCVInstrInfo.td"
 
 def : ProcessorModel<"generic-rv64", NoSchedModel, []>;
 
