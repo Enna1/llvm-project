@@ -21,4 +21,7 @@ def CC_RemniwRISCV : CallingConv<[
   CCIfType<[i64], CCAssignToStack<8, 8>>
 ]>;
 
-def CSR : CalleeSavedRegs<(add X2, X8, X9, (sequence "X%u", 18, 27))>;
+// Note: We do not implement the full details of the RISC-V calling convention,
+// also choose not to mark the stack pointer as a callee-saved register,
+// as the function prologue and epilogue inserter will manage it instead.
+def CSR : CalleeSavedRegs<(add X1, X3, X4, X8, X9, (sequence "X%u", 18, 27))>;

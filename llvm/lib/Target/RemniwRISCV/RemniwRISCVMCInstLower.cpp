@@ -28,9 +28,8 @@ bool RemniwRISCVMCInstLower::lowerOperand(const MachineOperand &MO,
                                           MCOperand &MCOp) const {
   switch (MO.getType()) {
   case MachineOperand::MO_Register:
-    if (MO.isImplicit()) {
+    if (MO.isImplicit())
       return false;
-    }
     MCOp = MCOperand::createReg(MO.getReg());
     break;
   case MachineOperand::MO_Immediate:

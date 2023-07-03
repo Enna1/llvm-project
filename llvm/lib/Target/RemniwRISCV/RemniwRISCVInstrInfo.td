@@ -162,9 +162,11 @@ class RVInstJ<bits<7> opcode, dag outs, dag ins, string opcodestr,
 // FIXME?: i64imm sync with SDT_CallSeqStart SDTCisVT<0, i64>, SDTCisVT<1, i64>
 let Defs = [X2], Uses = [X2] in {
 def ADJCALLSTACKDOWN : Pseudo<(outs), (ins i64imm:$amt1, i64imm:$amt2),
-                              [(callseq_start timm:$amt1, timm:$amt2)]>;
+                              [(callseq_start timm:$amt1, timm:$amt2)],
+                              "#ADJCALLSTACKDOWN", "$amt1 $amt2">;
 def ADJCALLSTACKUP   : Pseudo<(outs), (ins i64imm:$amt1, i64imm:$amt2),
-                              [(callseq_end timm:$amt1, timm:$amt2)]>;
+                              [(callseq_end timm:$amt1, timm:$amt2)],
+                              "#ADJCALLSTACKUP", "$amt1 $amt2">;
 }
 
 /// Integer Computational Instructions
