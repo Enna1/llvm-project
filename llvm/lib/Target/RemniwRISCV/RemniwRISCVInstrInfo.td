@@ -212,16 +212,69 @@ def : InstAlias<"mv $rd, $rs",   (ADDI GPR:$rd, GPR:$rs, 0)>;
 
 /// Control Transfer Instructions
 
+// Match `brcc` and lower to the appropriate RISC-V branch instruction.
+multiclass BrccPat<CondCode Cond, RVInstB Inst> {
+  def : Pat<(brcc Cond, GPR:$rs1, GPR:$rs2, bb:$imm12),
+            (Inst GPR:$rs1, GPR:$rs2, simm13_lsb0:$imm12)>;
+  // Explicitly select 0 to X0. The register coalescer doesn't always do it.
+  def : Pat<(brcc Cond, GPR:$rs1, 0, bb:$imm12),
+            (Inst GPR:$rs1, X0, simm13_lsb0:$imm12)>;
+}
+
+let isBranch = 1, isTerminator = 1 in
+def BEQ : RVInstB<0b000, 0b1100011, (outs),
+                  (ins GPR:$rs1, GPR:$rs2, simm13_lsb0:$imm12),
+                  "beq", "$rs1, $rs2, $imm12",
+                  /* Pattern for LD is defined below using Pat */[]>;
+defm : BrccPat<SETEQ, BEQ>;
+
+let isBranch = 1, isTerminator = 1 in
+def BNE : RVInstB<0b001, 0b1100011, (outs),
+                  (ins GPR:$rs1, GPR:$rs2, simm13_lsb0:$imm12),
+                  "bne", "$rs1, $rs2, $imm12",
+                  /* Pattern for LD is defined below using Pat */[]>;
+defm : BrccPat<SETNE, BNE>;
+
 let isBranch = 1, isTerminator = 1 in
 def BLT : RVInstB<0b100, 0b1100011, (outs),
                   (ins GPR:$rs1, GPR:$rs2, simm13_lsb0:$imm12),
                   "blt", "$rs1, $rs2, $imm12",
                   /* Pattern for LD is defined below using Pat */[]>;
-def : Pat<(brcc SETLT, GPR:$rs1, GPR:$rs2, bb:$imm12),
-          (BLT GPR:$rs1, GPR:$rs2, simm13_lsb0:$imm12)>;
-// Explicitly select 0 to X0. The register coalescer doesn't always do it.
-def : Pat<(brcc SETLT, GPR:$rs1, 0, bb:$imm12),
-          (BLT GPR:$rs1, X0, simm13_lsb0:$imm12)>;
+defm : BrccPat<SETLT, BLT>;
+
+let isBranch = 1, isTerminator = 1 in
+def BGE : RVInstB<0b101, 0b1100011, (outs),
+                  (ins GPR:$rs1, GPR:$rs2, simm13_lsb0:$imm12),
+                  "bge", "$rs1, $rs2, $imm12",
+                  /* Pattern for LD is defined below using Pat */[]>;
+defm : BrccPat<SETGE, BGE>;
+
+let isBranch = 1, isTerminator = 1 in
+def BLTU : RVInstB<0b110, 0b1100011, (outs),
+                  (ins GPR:$rs1, GPR:$rs2, simm13_lsb0:$imm12),
+                  "bltu", "$rs1, $rs2, $imm12",
+                  /* Pattern for LD is defined below using Pat */[]>;
+defm : BrccPat<SETULT, BLTU>;
+
+let isBranch = 1, isTerminator = 1 in
+def BGEU : RVInstB<0b111, 0b1100011, (outs),
+                  (ins GPR:$rs1, GPR:$rs2, simm13_lsb0:$imm12),
+                  "bgeu", "$rs1, $rs2, $imm12",
+                  /* Pattern for LD is defined below using Pat */[]>;
+defm : BrccPat<SETUGE, BGEU>;
+
+def : InstAlias<"beqz $rs, $offset",
+                (BEQ GPR:$rs,      X0, simm13_lsb0:$offset)>;
+def : InstAlias<"bnez $rs, $offset",
+                (BNE GPR:$rs,      X0, simm13_lsb0:$offset)>;
+def : InstAlias<"blez $rs, $offset",
+                (BGE      X0, GPR:$rs, simm13_lsb0:$offset)>;
+def : InstAlias<"bgez $rs, $offset",
+                (BGE GPR:$rs,      X0, simm13_lsb0:$offset)>;
+def : InstAlias<"bltz $rs, $offset",
+                (BLT GPR:$rs,      X0, simm13_lsb0:$offset)>;
+def : InstAlias<"bgtz $rs, $offset",
+                (BLT      X0, GPR:$rs, simm13_lsb0:$offset)>;
 
 let isCall = 1 in
 def JAL : RVInstJ<0b1101111, (outs GPR:$rd), (ins simm21_lsb0_jal:$imm20),
@@ -258,3 +311,75 @@ def PseudoCALL : Pseudo<(outs), (ins call_symbol:$func), []> {
 
 // Note: tglobaladdr defined in TargetSelectionDAG.td
 def : Pat<(remniwriscv_call tglobaladdr:$func), (PseudoCALL tglobaladdr:$func)>;
+
+
+def XOR : RVInstR<0b0000000, 0b100, 0b0110011,
+                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                  "xor", "$rd, $rs1, $rs2",
+                  []>;
+
+def OR : RVInstR<0b0000000, 0b110, 0b0110011,
+         (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+         "or", "$rd, $rs1, $rs2",
+         []>;
+
+def AND : RVInstR<0b0000000, 0b111, 0b0110011,
+                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                  "and", "$rd, $rs1, $rs2",
+                  []>;
+
+def XORI : RVInstI<0b100, 0b0010011,
+                   (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                   "xori", "$rd, $rs1, $imm12",
+                   []>;
+
+def ORI : RVInstI<0b110, 0b0010011,
+                  (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                  "ori", "$rd, $rs1, $imm12",
+                  []>;
+
+def ANDI : RVInstI<0b111, 0b0010011,
+                   (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                   "andi", "$rd, $rs1, $imm12",
+                   []>;
+
+def SLL  : RVInstR<0b0000000, 0b001, 0b0110011,
+                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                  "sll", "$rd, $rs1, $rs2",
+                  []>;
+
+def SRL : RVInstR<0b0000000, 0b101, 0b0110011,
+                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                  "srl", "$rd, $rs1, $rs2",
+                  []>;
+def : Pat<(srl GPR:$rs1, GPR:$rs2), (SRL GPR:$rs1, GPR:$rs2)>;
+
+def SRA : RVInstR<0b0100000, 0b101, 0b0110011,
+                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                  "sra", "$rd, $rs1, $rs2",
+                  []>;
+
+// def SLLI : Shift_ri<0b00000, 0b001, "slli">;
+// def SRLI : Shift_ri<0b00000, 0b101, "srli">;
+// def SRAI : Shift_ri<0b01000, 0b101, "srai">;
+
+
+def MULH : RVInstR<0b0000001, 0b001, 0b0110011,
+                   (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                   "mulh", "$rd, $rs1, $rs2",
+                   []>;
+
+def MULHSU : RVInstR<0b0000001, 0b010, 0b0110011,
+                     (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                     "mulhsu", "$rd, $rs1, $rs2",
+                     []>;
+
+def MULHU : RVInstR<0b0000001, 0b011, 0b0110011,
+                    (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                    "mulhu", "$rd, $rs1, $rs2",
+                    []>;
+
+def : Pat<(mul GPR:$rs1, GPR:$rs2), (MUL GPR:$rs1, GPR:$rs2)>;
+def : Pat<(mulhs GPR:$rs1, GPR:$rs2), (MULH GPR:$rs1, GPR:$rs2)>;
+// FIXME: def : Pat<(remniwriscv_mulhsu GPR:$rs1, GPR:$rs2), (MULHSU GPR:$rs1, GPR:$rs2)>;
+def : Pat<(mulhu GPR:$rs1, GPR:$rs2), (MULHU GPR:$rs1, GPR:$rs2)>;

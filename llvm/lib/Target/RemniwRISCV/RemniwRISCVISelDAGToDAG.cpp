@@ -2,6 +2,7 @@
 #include "RemniwRISCV.h"
 #include "RemniwRISCVTargetMachine.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
+#include <llvm/Support/ErrorHandling.h>
 #include <llvm/Support/MachineValueType.h>
 
 using namespace llvm;
@@ -37,7 +38,8 @@ void RemniwRISCVDAGToDAGISel::Select(SDNode *N) {
 
   switch (N->getOpcode()) {
   case ISD::Constant: {
-    int64_t Imm = cast<ConstantSDNode>(N)->getSExtValue();
+    auto *ConstNode = cast<ConstantSDNode>(N);
+    int64_t Imm = ConstNode->getSExtValue();
     if (-2048 <= Imm && Imm <= 2047) {
       SDValue SDImm = CurDAG->getTargetConstant(Imm, DL, MVT::i64);
       SDValue SrcReg = CurDAG->getRegister(RemniwRISCV::X0, MVT::i64);
@@ -45,6 +47,8 @@ void RemniwRISCVDAGToDAGISel::Select(SDNode *N) {
                                               SrcReg, SDImm);
       ReplaceNode(N, Result);
       return;
+    } else {
+      report_fatal_error("unsupported Imm Range");
     }
   }
   }
