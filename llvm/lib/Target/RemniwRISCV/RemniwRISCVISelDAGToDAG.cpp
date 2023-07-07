@@ -84,8 +84,12 @@ bool RemniwRISCVDAGToDAGISel::SelectAddrRegImm(SDValue Addr, SDValue &Base,
   if (SelectAddrFrameIndex(Addr, Base, Offset))
     return true;
 
-  // TODO
-  return false;
+  SDLoc DL(Addr);
+  MVT VT = Addr.getSimpleValueType();
+
+  Base = Addr;
+  Offset = CurDAG->getTargetConstant(0, DL, VT);
+  return true;
 }
 
 FunctionPass *llvm::createRemniwRISCVISelDag(RemniwRISCVTargetMachine &TM,
