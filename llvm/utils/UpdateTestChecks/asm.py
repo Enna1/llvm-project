@@ -504,6 +504,7 @@ def get_run_handler(triple):
       'ppc32': (scrub_asm_powerpc, ASM_FUNCTION_PPC_RE),
       'ppc64': (scrub_asm_powerpc, ASM_FUNCTION_PPC_RE),
       'powerpc': (scrub_asm_powerpc, ASM_FUNCTION_PPC_RE),
+      'remniwriscv64' : (scrub_asm_riscv, ASM_FUNCTION_RISCV_RE),
       'riscv32': (scrub_asm_riscv, ASM_FUNCTION_RISCV_RE),
       'riscv64': (scrub_asm_riscv, ASM_FUNCTION_RISCV_RE),
       'lanai': (scrub_asm_lanai, ASM_FUNCTION_LANAI_RE),
