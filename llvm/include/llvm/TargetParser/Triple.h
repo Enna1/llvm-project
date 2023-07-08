@@ -72,7 +72,7 @@ public:
     ppc64le,        // PPC64LE: powerpc64le
     r600,           // R600: AMD GPUs HD2XXX - HD6XXX
     amdgcn,         // AMDGCN: AMD GCN GPUs
-    remniwriscv64,  // RemniwRISC-V (64-bit): remniwriscv64
+    ltumnfriscv64,  // LtumnfRISC-V (64-bit): ltumnfriscv64
     riscv32,        // RISC-V (32-bit): riscv32
     riscv64,        // RISC-V (64-bit): riscv64
     sparc,          // Sparc: sparc
