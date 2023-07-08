@@ -29,8 +29,12 @@ public:
   explicit RemniwRISCVTargetLowering(const TargetMachine &TM,
                                      const RemniwRISCVSubtarget &STI);
 
+  // Provide custom lowering hooks for some operations.
+  // SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
+
   const char *getTargetNodeName(unsigned Opcode) const override;
 
+private:
   SDValue LowerCall(TargetLowering::CallLoweringInfo &CLI,
                     SmallVectorImpl<SDValue> &InVals) const override;
 

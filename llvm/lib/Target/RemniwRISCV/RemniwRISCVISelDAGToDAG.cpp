@@ -2,14 +2,14 @@
 #include "RemniwRISCV.h"
 #include "RemniwRISCVTargetMachine.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
-#include <llvm/Support/ErrorHandling.h>
-#include <llvm/Support/MachineValueType.h>
 
 using namespace llvm;
 
 namespace {
 
 class RemniwRISCVDAGToDAGISel : public SelectionDAGISel {
+  const RemniwRISCVSubtarget *Subtarget = nullptr;
+
 public:
   static char ID;
 
@@ -19,6 +19,11 @@ public:
 
   StringRef getPassName() const override {
     return "RemniwRISCV DAG->DAG Pattern Instruction Selection";
+  }
+
+  bool runOnMachineFunction(MachineFunction &MF) override {
+    Subtarget = &MF.getSubtarget<RemniwRISCVSubtarget>();
+    return SelectionDAGISel::runOnMachineFunction(MF);
   }
 
   void Select(SDNode *N) override;
@@ -59,10 +64,8 @@ void RemniwRISCVDAGToDAGISel::Select(SDNode *N) {
 bool RemniwRISCVDAGToDAGISel::SelectAddrFrameIndex(SDValue Addr, SDValue &Base,
                                                    SDValue &Offset) {
   if (auto *FIN = dyn_cast<FrameIndexSDNode>(Addr)) {
-    Base = CurDAG->getTargetFrameIndex(FIN->getIndex(),
-                                       /*XLenVT for RV64*/ MVT::i64);
-    Offset =
-        CurDAG->getTargetConstant(0, SDLoc(Addr), /*XLenVT for RV64*/ MVT::i64);
+    Base = CurDAG->getTargetFrameIndex(FIN->getIndex(), Subtarget->getXLenVT());
+    Offset = CurDAG->getTargetConstant(0, SDLoc(Addr), Subtarget->getXLenVT());
     return true;
   }
 

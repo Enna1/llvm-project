@@ -47,7 +47,7 @@ bool RemniwRISCVMCInstLower::lowerOperand(const MachineOperand &MO,
     // Regmasks are like implicit defs.
     return false;
   default:
-    llvm_unreachable("Unknown operand type!");
+    report_fatal_error("Unknown operand type");
   }
   return true;
 }

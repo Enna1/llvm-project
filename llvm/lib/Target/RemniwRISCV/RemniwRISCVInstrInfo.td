@@ -11,7 +11,7 @@ def SDT_CallSeqEnd   : SDCallSeqEnd<[SDTCisVT<0, i64>,
                                      SDTCisVT<1, i64>]>;
 
 // Target-dependent type requirements.
-def SDT_RemniwRISCVCall : SDTypeProfile<0, -1, [SDTCisVT<0, /*XLenVT for RV64*/i64>]>;
+def SDT_RemniwRISCVCall : SDTypeProfile<0, -1, [SDTCisVT<0, XLenVT]>;
 
 // Target-independent nodes, but with target-specific formats.
 def callseq_start : SDNode<"ISD::CALLSEQ_START", SDT_CallSeqStart,
@@ -31,7 +31,7 @@ def remniwriscv_ret_flag : SDNode<"RemniwRISCVISD::RET_FLAG", SDTNone,
 // Operand and SDNode transformation definitions.
 //===----------------------------------------------------------------------===//
 
-def simm12 : Operand<i64>, ImmLeaf<i64, [{return isInt<12>(Imm);}]>;
+def simm12 : Operand<XLenVT>, ImmLeaf<XLenVT, [{return isInt<12>(Imm);}]>;
 
 // FIXME: here we simply defines `simm21_lsb0_jal`, as an instance of
 //        the `Operand` class, which represent branch target operands.
@@ -44,7 +44,7 @@ def simm13_lsb0 : Operand<OtherVT>;
 
 // FIXME: ditto
 // A bare symbol used in call only.
-def call_symbol : Operand</*XLenVT*/i64>;
+def call_symbol : Operand<XLenVT>;
 
 // Addressing modes.
 // Necessary because a frameindex can't be matched directly in a pattern.

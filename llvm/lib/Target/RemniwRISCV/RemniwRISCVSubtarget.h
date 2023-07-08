@@ -40,6 +40,8 @@ public:
     return &RegInfo;
   }
 
+  MVT getXLenVT() const { return MVT::i64; }
+
 private:
   void ParseSubtargetFeatures(StringRef CPU, StringRef TuneCPU, StringRef FS);
 

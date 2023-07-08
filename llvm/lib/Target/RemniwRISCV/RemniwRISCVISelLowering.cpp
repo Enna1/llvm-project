@@ -12,8 +12,18 @@ using namespace llvm;
 RemniwRISCVTargetLowering::RemniwRISCVTargetLowering(
     const TargetMachine &TM, const RemniwRISCVSubtarget &STI)
     : TargetLowering(TM), Subtarget(STI) {
-  addRegisterClass(MVT::i64, &RemniwRISCV::GPRRegClass);
+  MVT XLenVT = Subtarget.getXLenVT();
+  addRegisterClass(XLenVT, &RemniwRISCV::GPRRegClass);
+
   computeRegisterProperties(Subtarget.getRegisterInfo());
+
+  setStackPointerRegisterToSaveRestore(RISCV::X2);
+
+  // TODO: add all necessary setOperationAction calls.
+
+  // Function alignments
+  setMinFunctionAlignment(Align(4));
+  setPrefFunctionAlignment(Align(4));
 }
 
 const char *
@@ -191,9 +201,13 @@ SDValue RemniwRISCVTargetLowering::LowerFormalArguments(
   if (IsVarArg)
     report_fatal_error("VarArg not supported");
 
+  MachineFunction &MF = DAG.getMachineFunction();
+  MachineRegisterInfo &RegInfo = MF.getRegInfo();
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  MVT XLenVT = Subtarget.getXLenVT();
+
   // Assign locations to all of the incoming arguments.
   SmallVector<CCValAssign, 16> ArgLocs;
-  MachineFunction &MF = DAG.getMachineFunction();
   CCState CCInfo(CallConv, IsVarArg, MF, ArgLocs, *DAG.getContext());
   CCInfo.AnalyzeFormalArguments(Ins, CC_RemniwRISCV);
 
@@ -201,17 +215,16 @@ SDValue RemniwRISCVTargetLowering::LowerFormalArguments(
     CCValAssign &VA = ArgLocs[i];
     EVT LocVT = VA.getLocVT();
     EVT ValVT = VA.getValVT();
+    if (ValVT != XLenVT)
+      report_fatal_error(
+          "LowerFormalArguments only support MVT::i64 argument type");
     if (VA.isRegLoc()) {
-      assert(ValVT == MVT::i64 && "Only support MVT::i64 register passing");
       const TargetRegisterClass *RC = getRegClassFor(LocVT.getSimpleVT());
-      MachineRegisterInfo &RegInfo = MF.getRegInfo();
       Register VReg = RegInfo.createVirtualRegister(RC);
       RegInfo.addLiveIn(VA.getLocReg(), VReg);
       SDValue Val = DAG.getCopyFromReg(Chain, DL, VReg, LocVT);
       InVals.push_back(Val);
     } else /* isMemLoc() */ {
-      assert(ValVT == MVT::i64 && "Only support passing arguments as i64");
-      MachineFrameInfo &MFI = MF.getFrameInfo();
       EVT PtrVT =
           MVT::getIntegerVT(DAG.getDataLayout().getPointerSizeInBits(0));
       int FI = MFI.CreateFixedObject(ValVT.getStoreSize(), VA.getLocMemOffset(),
@@ -233,6 +246,10 @@ SDValue RemniwRISCVTargetLowering::LowerReturn(
     const SmallVectorImpl<ISD::OutputArg> &Outs,
     const SmallVectorImpl<SDValue> &OutVals, const SDLoc &DL,
     SelectionDAG &DAG) const {
+  if (IsVarArg) {
+    report_fatal_error("VarArg not supported");
+  }
+
   SmallVector<CCValAssign, 16> RVLocs;
 
   CCState CCInfo(CallConv, IsVarArg, DAG.getMachineFunction(), RVLocs,
@@ -242,6 +259,7 @@ SDValue RemniwRISCVTargetLowering::LowerReturn(
   SDValue Glue;
   SmallVector<SDValue, 4> RetOps(1, Chain);
 
+  // Copy the result values into the output registers.
   for (unsigned i = 0, e = RVLocs.size(); i < e; ++i) {
     CCValAssign &VA = RVLocs[i];
     assert(VA.isRegLoc() && "Can only return in registers!");

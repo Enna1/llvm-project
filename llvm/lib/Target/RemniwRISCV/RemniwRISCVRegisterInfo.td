@@ -43,13 +43,19 @@ let RegAltNameIndices = [ABIRegAltName] in {
   def X31 : RemniwRISCVReg<31, "x31", ["t6"]>, DwarfRegNum<[31]>;
 }
 
+defvar RV64 = DefaultMode;
+def XLenVT : ValueTypeByHwMode<[RV64], [i64]>;
+def XLenRI : RegInfoByHwMode<[RV64], [RegInfo<64,64,64>]>;
+
 // The order of registers represents the preferred allocation sequence.
 // Registers are listed in the order caller-save, callee-save, specials.
-def GPR : RegisterClass<"RemniwRISCV", /*XLenVT for RV64*/ [i64], /*alignment*/ 64, (add
+def GPR : RegisterClass<"RemniwRISCV", [XLenVT], /*alignment*/ 64, (add
   (sequence "X%u", 10, 17),
   (sequence "X%u", 5, 7),
   (sequence "X%u", 28, 31),
   (sequence "X%u", 8, 9),
   (sequence "X%u", 18, 27),
   (sequence "X%u", 0, 4)
-)>;
+)> {
+  let RegInfos = XLenRI;
+}
