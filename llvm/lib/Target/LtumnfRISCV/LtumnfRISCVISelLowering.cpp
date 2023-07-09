@@ -38,6 +38,11 @@ LtumnfRISCVTargetLowering::getTargetNodeName(unsigned Opcode) const {
   }
 }
 
+bool LtumnfRISCVTargetLowering::isSExtCheaperThanZExt(EVT SrcVT,
+                                                      EVT DstVT) const {
+  return SrcVT == MVT::i32 && DstVT == MVT::i64;
+}
+
 SDValue
 LtumnfRISCVTargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
                                      SmallVectorImpl<SDValue> &InVals) const {

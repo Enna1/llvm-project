@@ -42,20 +42,22 @@ void LtumnfRISCVDAGToDAGISel::Select(SDNode *N) {
   SDLoc DL(N);
 
   switch (N->getOpcode()) {
-  case ISD::Constant: {
-    auto *ConstNode = cast<ConstantSDNode>(N);
-    int64_t Imm = ConstNode->getSExtValue();
-    if (-2048 <= Imm && Imm <= 2047) {
-      SDValue SDImm = CurDAG->getTargetConstant(Imm, DL, MVT::i64);
-      SDValue SrcReg = CurDAG->getRegister(LtumnfRISCV::X0, MVT::i64);
-      SDNode *Result = CurDAG->getMachineNode(LtumnfRISCV::ADDI, DL, MVT::i64,
-                                              SrcReg, SDImm);
-      ReplaceNode(N, Result);
-      return;
-    } else {
-      report_fatal_error("unsupported Imm Range");
-    }
-  }
+    // materialize contants in LtumnfRISCVInstInfo.td
+    // case ISD::Constant: {
+    //   auto *ConstNode = cast<ConstantSDNode>(N);
+    //   int64_t Imm = ConstNode->getSExtValue();
+    //   if (-2048 <= Imm && Imm <= 2047) {
+    //     SDValue SDImm = CurDAG->getTargetConstant(Imm, DL, MVT::i64);
+    //     SDValue SrcReg = CurDAG->getRegister(LtumnfRISCV::X0, MVT::i64);
+    //     SDNode *Result = CurDAG->getMachineNode(LtumnfRISCV::ADDI, DL,
+    //     MVT::i64,
+    //                                             SrcReg, SDImm);
+    //     ReplaceNode(N, Result);
+    //     return;
+    //   } else {
+    //     report_fatal_error("unsupported Imm Range");
+    //   }
+    // }
   }
 
   SelectCode(N);

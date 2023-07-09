@@ -34,6 +34,10 @@ public:
 
   const char *getTargetNodeName(unsigned Opcode) const override;
 
+  // When extend/promote i32 to i64, prefer to sign extend.
+  // FIXME: is this the right way ?
+  bool isSExtCheaperThanZExt(EVT SrcVT, EVT DstVT) const override;
+
 private:
   SDValue LowerCall(TargetLowering::CallLoweringInfo &CLI,
                     SmallVectorImpl<SDValue> &InVals) const override;

@@ -31,22 +31,39 @@ def ltumnfriscv_ret_flag : SDNode<"LtumnfRISCVISD::RET_FLAG", SDTNone,
 // Operand and SDNode transformation definitions.
 //===----------------------------------------------------------------------===//
 
-def simm12 : Operand<XLenVT>, ImmLeaf<XLenVT, [{return isInt<12>(Imm);}]>;
-
 // FIXME: here we simply defines `simm21_lsb0_jal`, as an instance of
 //        the `Operand` class, which represent branch target operands.
 //        We should check if it is a 21-bit signed immediate
 //        where the least significant bit is zero.
 def simm21_lsb0_jal : Operand<OtherVT>; // `OtherVT` defined in ValueTypes.td
 
-// FIXME: ditto
+// ditto
 def simm13_lsb0 : Operand<OtherVT>;
 
 def uimm5 : Operand<XLenVT>, ImmLeaf<XLenVT, [{return isUInt<5>(Imm);}]>;
 
+def simm12 : Operand<XLenVT>, ImmLeaf<XLenVT, [{return isInt<12>(Imm);}]>;
+
 def uimm20 : Operand<XLenVT>, ImmLeaf<XLenVT, [{return isUInt<20>(Imm);}]>;
 
-// FIXME: ditto
+def simm32 : Operand<XLenVT>, ImmLeaf<XLenVT, [{return isInt<32>(Imm);}]>;
+
+// Extract least significant 12 bits from an immediate value and sign extend
+// them.
+def LO12Sext : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(SignExtend64<12>(N->getZExtValue()),
+                                   SDLoc(N), N->getValueType(0));
+}]>;
+
+// Extract the most significant 20 bits from an immediate value. Add 1 if bit
+// 11 is 1, to compensate for the low 12 bits in the matching immediate addi
+// or ld/st being negative.
+def HI20 : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(((N->getZExtValue()+0x800) >> 12) & 0xfffff,
+                                   SDLoc(N), N->getValueType(0));
+}]>;
+
+// FIXME: ditto need check
 // A bare symbol used in call only.
 def call_symbol : Operand<XLenVT>;
 
@@ -530,3 +547,10 @@ def PseudoCALL : Pseudo<(outs), (ins call_symbol:$func), []> {
 
 // Note: tglobaladdr defined in TargetSelectionDAG.td
 def : Pat<(ltumnfriscv_call tglobaladdr:$func), (PseudoCALL tglobaladdr:$func)>;
+
+
+/// Codegen patterns
+
+def : Pat<(simm12:$imm), (ADDI X0, simm12:$imm)>;
+// TODO: Add a pattern for immediates with all zeroes in the lower 12 bits.
+def : Pat<(simm32:$imm), (ADDI (LUI (HI20 imm:$imm)), (LO12Sext imm:$imm))>;
