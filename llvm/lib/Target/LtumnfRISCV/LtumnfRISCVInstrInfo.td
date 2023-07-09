@@ -44,6 +44,8 @@ def simm13_lsb0 : Operand<OtherVT>;
 
 def uimm5 : Operand<XLenVT>, ImmLeaf<XLenVT, [{return isUInt<5>(Imm);}]>;
 
+def uimm20 : Operand<XLenVT>, ImmLeaf<XLenVT, [{return isUInt<20>(Imm);}]>;
+
 // FIXME: ditto
 // A bare symbol used in call only.
 def call_symbol : Operand<XLenVT>;
@@ -226,48 +228,133 @@ def ADJCALLSTACKUP   : Pseudo<(outs), (ins i64imm:$amt1, i64imm:$amt2),
                               "#ADJCALLSTACKUP", "$amt1 $amt2">;
 }
 
-/// Integer Computational Instructions
+/// Shifts Instructions
 
-def ADDI : RVInstI<0b000, OPC_OP_IMM, (outs GPR:$rd),
-                   (ins GPR:$rs1, simm12:$imm12), "addi", "$rd, $rs1, $imm12",
-                   [(set GPR:$rd, (add GPR:$rs1, simm12:$imm12))]>;
+def SLL  : RVInstR<0b0000000, 0b001, OPC_OP,
+                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                  "sll", "$rd, $rs1, $rs2",
+                  []>;
+def : Pat<(shl GPR:$rs1, GPR:$rs2), (SLL GPR:$rs1, GPR:$rs2)>;
+
+def SLLI : RVInstIShift<0b00000, 0b001, OPC_OP_IMM,
+                        (outs GPR:$rd), (ins GPR:$rs1, uimm5:$shamt),
+                        "slli", "$rd, $rs1, $shamt",
+                        []>;
+def : Pat<(shl GPR:$rs1, simm12:$imm12), (SLLI GPR:$rs1, simm12:$imm12)>;
+
+def SRL : RVInstR<0b0000000, 0b101, OPC_OP,
+                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                  "srl", "$rd, $rs1, $rs2",
+                  []>;
+def : Pat<(srl GPR:$rs1, GPR:$rs2), (SRL GPR:$rs1, GPR:$rs2)>;
+
+def SRLI : RVInstIShift<0b00000, 0b101, OPC_OP_IMM,
+                        (outs GPR:$rd), (ins GPR:$rs1, uimm5:$shamt),
+                        "srli", "$rd, $rs1, $shamt",
+                        []>;
+def : Pat<(srl GPR:$rs1, simm12:$imm12), (SRLI GPR:$rs1, simm12:$imm12)>;
+
+def SRA : RVInstR<0b0100000, 0b101, OPC_OP,
+                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                  "sra", "$rd, $rs1, $rs2",
+                  []>;
+def : Pat<(sra GPR:$rs1, GPR:$rs2), (SRA GPR:$rs1, GPR:$rs2)>;
+
+def SRAI : RVInstIShift<0b01000, 0b101, OPC_OP_IMM,
+                        (outs GPR:$rd), (ins GPR:$rs1, uimm5:$shamt),
+                        "srai", "$rd, $rs1, $shamt",
+                        []>;
+def : Pat<(sra GPR:$rs1, simm12:$imm12), (SRAI GPR:$rs1, simm12:$imm12)>;
+
+
+/// Arithmetic Instructions
 
 def ADD : RVInstR<0b0000000, 0b000, OPC_OP, (outs GPR:$rd),
                   (ins GPR:$rs1, GPR:$rs2), "add", "$rd, $rs1, $rs2",
                   [(set GPR:$rd, (add GPR:$rs1, GPR:$rs2))]>;
 
+def ADDI : RVInstI<0b000, OPC_OP_IMM, (outs GPR:$rd),
+                   (ins GPR:$rs1, simm12:$imm12), "addi", "$rd, $rs1, $imm12",
+                   [(set GPR:$rd, (add GPR:$rs1, simm12:$imm12))]>;
+
 def SUB : RVInstR<0b0100000, 0b000, OPC_OP, (outs GPR:$rd),
                   (ins GPR:$rs1, GPR:$rs2), "sub", "$rd, $rs1, $rs2",
                   [(set GPR:$rd, (sub GPR:$rs1, GPR:$rs2))]>;
 
-def MUL : RVInstR<0b0000001, 0b000, OPC_OP, (outs GPR:$rd),
-                  (ins GPR:$rs1, GPR:$rs2), "mul", "$rd, $rs1, $rs2",
-                  [(set GPR:$rd, (mul GPR:$rs1, GPR:$rs2))]>;
+def LUI : RVInstU<OPC_LUI, (outs GPR:$rd), (ins uimm20:$imm20),
+                  "lui", "$rd, $imm20", []>;
 
-def DIV : RVInstR<0b0000001, 0b100, OPC_OP, (outs GPR:$rd),
-                  (ins GPR:$rs1, GPR:$rs2), "div", "$rd, $rs1, $rs2",
-                  [(set GPR:$rd, (sdiv GPR:$rs1, GPR:$rs2))]>;
+def AUIPC : RVInstU<OPC_AUIPC, (outs GPR:$rd), (ins uimm20:$imm20),
+                    "auipc", "$rd, $imm20", []>;
 
 
-/// Load and Store instructions
+/// Logical Instructions
 
-def LD : RVInstI<0b011, OPC_LOAD, (outs GPR:$rd),
-                 (ins GPR:$rs1, simm12:$imm12), "ld", "$rd, ${imm12}(${rs1})",
-                 []>;
-def : Pat<(i64 (load (AddrRegImm GPR:$rs1, simm12:$imm12))),
-          (LD GPR:$rs1, simm12:$imm12)>;
+def XOR : RVInstR<0b0000000, 0b100, OPC_OP,
+                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                  "xor", "$rd, $rs1, $rs2",
+                  []>;
+def : Pat<(xor GPR:$rs1, GPR:$rs2), (XOR GPR:$rs1, GPR:$rs2)>;
 
-def SD : RVInstS<0b011, OPC_STORE, (outs),
-                 (ins GPR:$rs2, GPR:$rs1, simm12:$imm12),
-                 "sd", "$rs2, ${imm12}(${rs1})",
-                 []>;
-def : Pat<(store (i64 GPR:$rs2), (AddrRegImm GPR:$rs1, simm12:$imm12)),
-          (SD GPR:$rs2, GPR:$rs1, simm12:$imm12)>;
+def OR : RVInstR<0b0000000, 0b110, OPC_OP,
+         (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+         "or", "$rd, $rs1, $rs2",
+         []>;
+def : Pat<(or GPR:$rs1, GPR:$rs2), (OR GPR:$rs1, GPR:$rs2)>;
 
-def : InstAlias<"li $rd, $imm",  (ADDI GPR:$rd, X0, simm12:$imm)>;
-def : InstAlias<"mv $rd, $rs",   (ADDI GPR:$rd, GPR:$rs, 0)>;
+def AND : RVInstR<0b0000000, 0b111, OPC_OP,
+                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                  "and", "$rd, $rs1, $rs2",
+                  []>;
+def : Pat<(and GPR:$rs1, GPR:$rs2), (AND GPR:$rs1, GPR:$rs2)>;
 
-/// Control Transfer Instructions
+def XORI : RVInstI<0b100, OPC_OP_IMM,
+                   (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                   "xori", "$rd, $rs1, $imm12",
+                   []>;
+def : Pat<(xor GPR:$rs1, simm12:$imm12), (XORI GPR:$rs1, simm12:$imm12)>;
+
+def ORI : RVInstI<0b110, OPC_OP_IMM,
+                  (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                  "ori", "$rd, $rs1, $imm12",
+                  []>;
+def : Pat<(or GPR:$rs1, simm12:$imm12), (ORI GPR:$rs1, simm12:$imm12)>;
+
+def ANDI : RVInstI<0b111, OPC_OP_IMM,
+                   (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                   "andi", "$rd, $rs1, $imm12",
+                   []>;
+def : Pat<(and GPR:$rs1, simm12:$imm12), (ANDI GPR:$rs1, simm12:$imm12)>;
+
+
+/// Compare Instructions
+
+def SLT : RVInstR<0b0000000, 0b010, OPC_OP,
+                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+                  "slt", "$rd, $rs1, $rs2",
+                  []>;
+def : Pat<(setlt GPR:$rs1, GPR:$rs2), (SLT GPR:$rs1, GPR:$rs2)>;
+
+def SLTI : RVInstI<0b010, OPC_OP_IMM,
+                   (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                   "slti", "$rd, $rs1, $imm12",
+                   []>;
+def : Pat<(setlt GPR:$rs1, simm12:$imm12), (SLTI GPR:$rs1, simm12:$imm12)>;
+
+def SLTU : RVInstR<0b0000000, 0b011, OPC_OP,
+          (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
+          "sltu", "$rd, $rs1, $rs2",
+          []>;
+def : Pat<(setult GPR:$rs1, GPR:$rs2), (SLTU GPR:$rs1, GPR:$rs2)>;
+
+def SLTIU : RVInstI<0b011, OPC_OP_IMM,
+                   (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                   "sltiu", "$rd, $rs1, $imm12",
+                   []>;
+def : Pat<(setult GPR:$rs1, simm12:$imm12), (SLTIU GPR:$rs1, simm12:$imm12)>;
+
+
+/// Branches Instructions
 
 // Match `brcc` and lower to the appropriate RISC-V branch instruction.
 multiclass BrccPat<CondCode Cond, RVInstB Inst> {
@@ -333,19 +420,12 @@ def : InstAlias<"bltz $rs, $offset",
 def : InstAlias<"bgtz $rs, $offset",
                 (BLT      X0, GPR:$rs, simm13_lsb0:$offset)>;
 
+
+/// Jump & Link Instructions
+
 let isCall = 1 in
 def JAL : RVInstJ<OPC_JAL, (outs GPR:$rd), (ins simm21_lsb0_jal:$imm20),
                   "jal", "$rd, $imm20", []>;
-
-def : InstAlias<"j $offset", (JAL X0, simm21_lsb0_jal:$offset)>;
-
-// Note:
-// - `bb` : SelectionDAG node defined in TargetSelectionDAG.td
-// - isBarrier : the specified instruction stops control flow from executing
-//               the instruction immediately following it.
-let isBarrier = 1, isBranch = 1, isTerminator = 1 in
-def PseudoBR : Pseudo<(outs), (ins simm21_lsb0_jal:$imm20), [(br bb:$imm20)]>,
-               PseudoInstExpansion<(JAL X0, simm21_lsb0_jal:$imm20)>;
 
 let isCall = 1 in
 def JALR : RVInstI<0b000, OPC_JALR, (outs GPR:$rd),
@@ -353,122 +433,29 @@ def JALR : RVInstI<0b000, OPC_JALR, (outs GPR:$rd),
                    "jalr", "$rd, ${imm12}(${rs1})",
                    []>;
 
-def : InstAlias<"ret", (JALR X0, X1, 0), 4>;
 
-let isBarrier = 1, isReturn = 1, isTerminator = 1 in
-def PseudoRET : Pseudo<(outs), (ins), [(ltumnfriscv_ret_flag)]>,
-                PseudoInstExpansion<(JALR X0, X1, 0)>;
+/// Loads and Stores instructions
 
-// PseudoCALL is a pseudo instruction which will eventually expand to auipc
-// and jalr while encoding.
-let isCall = 1, Defs = [X1], isCodeGenOnly = 0, Size = 8 in
-def PseudoCALL : Pseudo<(outs), (ins call_symbol:$func), []> {
-  let AsmString = "call\t$func";
-}
+def LD : RVInstI<0b011, OPC_LOAD, (outs GPR:$rd),
+                 (ins GPR:$rs1, simm12:$imm12), "ld", "$rd, ${imm12}(${rs1})",
+                 []>;
+def : Pat<(i64 (load (AddrRegImm GPR:$rs1, simm12:$imm12))),
+          (LD GPR:$rs1, simm12:$imm12)>;
 
-// Note: tglobaladdr defined in TargetSelectionDAG.td
-def : Pat<(ltumnfriscv_call tglobaladdr:$func), (PseudoCALL tglobaladdr:$func)>;
+def SD : RVInstS<0b011, OPC_STORE, (outs),
+                 (ins GPR:$rs2, GPR:$rs1, simm12:$imm12),
+                 "sd", "$rs2, ${imm12}(${rs1})",
+                 []>;
+def : Pat<(store (i64 GPR:$rs2), (AddrRegImm GPR:$rs1, simm12:$imm12)),
+          (SD GPR:$rs2, GPR:$rs1, simm12:$imm12)>;
 
 
-def XOR : RVInstR<0b0000000, 0b100, OPC_OP,
+/// Multiply Instructions
+
+def MUL : RVInstR<0b0000001, 0b000, OPC_OP,
                   (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
-                  "xor", "$rd, $rs1, $rs2",
+                  "mul", "$rd, $rs1, $rs2",
                   []>;
-def : Pat<(xor GPR:$rs1, GPR:$rs2), (XOR GPR:$rs1, GPR:$rs2)>;
-
-def OR : RVInstR<0b0000000, 0b110, OPC_OP,
-         (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
-         "or", "$rd, $rs1, $rs2",
-         []>;
-def : Pat<(or GPR:$rs1, GPR:$rs2), (OR GPR:$rs1, GPR:$rs2)>;
-
-def AND : RVInstR<0b0000000, 0b111, OPC_OP,
-                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
-                  "and", "$rd, $rs1, $rs2",
-                  []>;
-def : Pat<(and GPR:$rs1, GPR:$rs2), (AND GPR:$rs1, GPR:$rs2)>;
-
-def XORI : RVInstI<0b100, OPC_OP_IMM,
-                   (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
-                   "xori", "$rd, $rs1, $imm12",
-                   []>;
-def : Pat<(xor GPR:$rs1, simm12:$imm12), (XORI GPR:$rs1, simm12:$imm12)>;
-
-def ORI : RVInstI<0b110, OPC_OP_IMM,
-                  (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
-                  "ori", "$rd, $rs1, $imm12",
-                  []>;
-def : Pat<(or GPR:$rs1, simm12:$imm12), (ORI GPR:$rs1, simm12:$imm12)>;
-
-def ANDI : RVInstI<0b111, OPC_OP_IMM,
-                   (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
-                   "andi", "$rd, $rs1, $imm12",
-                   []>;
-def : Pat<(and GPR:$rs1, simm12:$imm12), (ANDI GPR:$rs1, simm12:$imm12)>;
-
-def SLL  : RVInstR<0b0000000, 0b001, OPC_OP,
-                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
-                  "sll", "$rd, $rs1, $rs2",
-                  []>;
-def : Pat<(shl GPR:$rs1, GPR:$rs2), (SLL GPR:$rs1, GPR:$rs2)>;
-
-def SLLI : RVInstIShift<0b00000, 0b001, OPC_OP_IMM,
-                        (outs GPR:$rd), (ins GPR:$rs1, uimm5:$shamt),
-                        "slli", "$rd, $rs1, $shamt",
-                        []>;
-def : Pat<(shl GPR:$rs1, simm12:$imm12), (SLLI GPR:$rs1, simm12:$imm12)>;
-
-def SRL : RVInstR<0b0000000, 0b101, OPC_OP,
-                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
-                  "srl", "$rd, $rs1, $rs2",
-                  []>;
-def : Pat<(srl GPR:$rs1, GPR:$rs2), (SRL GPR:$rs1, GPR:$rs2)>;
-
-def SRLI : RVInstIShift<0b00000, 0b101, OPC_OP_IMM,
-                        (outs GPR:$rd), (ins GPR:$rs1, uimm5:$shamt),
-                        "srli", "$rd, $rs1, $shamt",
-                        []>;
-def : Pat<(srl GPR:$rs1, simm12:$imm12), (SRLI GPR:$rs1, simm12:$imm12)>;
-
-def SRA : RVInstR<0b0100000, 0b101, OPC_OP,
-                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
-                  "sra", "$rd, $rs1, $rs2",
-                  []>;
-def : Pat<(sra GPR:$rs1, GPR:$rs2), (SRA GPR:$rs1, GPR:$rs2)>;
-
-def SRAI : RVInstIShift<0b01000, 0b101, OPC_OP_IMM,
-                        (outs GPR:$rd), (ins GPR:$rs1, uimm5:$shamt),
-                        "srai", "$rd, $rs1, $shamt",
-                        []>;
-def : Pat<(sra GPR:$rs1, simm12:$imm12), (SRAI GPR:$rs1, simm12:$imm12)>;
-
-
-/// Compare Instructions
-
-def SLT : RVInstR<0b0000000, 0b010, OPC_OP,
-                  (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
-                  "slt", "$rd, $rs1, $rs2",
-                  []>;
-def : Pat<(setlt GPR:$rs1, GPR:$rs2), (SLT GPR:$rs1, GPR:$rs2)>;
-
-def SLTI : RVInstI<0b010, OPC_OP_IMM,
-                   (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
-                   "slti", "$rd, $rs1, $imm12",
-                   []>;
-def : Pat<(setlt GPR:$rs1, simm12:$imm12), (SLTI GPR:$rs1, simm12:$imm12)>;
-
-def SLTU : RVInstR<0b0000000, 0b011, OPC_OP,
-          (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
-          "sltu", "$rd, $rs1, $rs2",
-          []>;
-def : Pat<(setult GPR:$rs1, GPR:$rs2), (SLTU GPR:$rs1, GPR:$rs2)>;
-
-def SLTIU : RVInstI<0b011, OPC_OP_IMM,
-                   (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
-                   "sltiu", "$rd, $rs1, $imm12",
-                   []>;
-def : Pat<(setult GPR:$rs1, simm12:$imm12), (SLTIU GPR:$rs1, simm12:$imm12)>;
-
 
 def MULH : RVInstR<0b0000001, 0b001, OPC_OP,
                    (outs GPR:$rd), (ins GPR:$rs1, GPR:$rs2),
@@ -489,3 +476,57 @@ def : Pat<(mul GPR:$rs1, GPR:$rs2), (MUL GPR:$rs1, GPR:$rs2)>;
 def : Pat<(mulhs GPR:$rs1, GPR:$rs2), (MULH GPR:$rs1, GPR:$rs2)>;
 // FIXME: def : Pat<(ltumnfriscv_mulhsu GPR:$rs1, GPR:$rs2), (MULHSU GPR:$rs1, GPR:$rs2)>;
 def : Pat<(mulhu GPR:$rs1, GPR:$rs2), (MULHU GPR:$rs1, GPR:$rs2)>;
+
+
+/// Divide Instructions
+
+def DIV : RVInstR<0b0000001, 0b100, OPC_OP, (outs GPR:$rd),
+                  (ins GPR:$rs1, GPR:$rs2), "div", "$rd, $rs1, $rs2",
+                  []>;
+
+def DIVU : RVInstR<0b0000001, 0b101, OPC_OP, (outs GPR:$rd),
+                  (ins GPR:$rs1, GPR:$rs2), "divu", "$rd, $rs1, $rs2",
+                  []>;
+
+def REM : RVInstR<0b0000001, 0b110, OPC_OP, (outs GPR:$rd),
+                  (ins GPR:$rs1, GPR:$rs2), "rem", "$rd, $rs1, $rs2",
+                  []>;
+
+def REMU : RVInstR<0b0000001, 0b111, OPC_OP, (outs GPR:$rd),
+                  (ins GPR:$rs1, GPR:$rs2), "remu", "$rd, $rs1, $rs2",
+                  []>;
+
+def : Pat<(sdiv GPR:$rs1, GPR:$rs2), (DIV GPR:$rs1, GPR:$rs2)>;
+def : Pat<(udiv GPR:$rs1, GPR:$rs2), (DIVU GPR:$rs1, GPR:$rs2)>;
+def : Pat<(srem GPR:$rs1, GPR:$rs2), (REM GPR:$rs1, GPR:$rs2)>;
+def : Pat<(urem GPR:$rs1, GPR:$rs2), (REMU GPR:$rs1, GPR:$rs2)>;
+
+
+/// Pseudo Instructions
+
+def : InstAlias<"li $rd, $imm",  (ADDI GPR:$rd, X0, simm12:$imm)>;
+def : InstAlias<"mv $rd, $rs",   (ADDI GPR:$rd, GPR:$rs, 0)>;
+def : InstAlias<"j $offset", (JAL X0, simm21_lsb0_jal:$offset)>;
+def : InstAlias<"ret", (JALR X0, X1, 0), 4>;
+
+// Note:
+// - `bb` : SelectionDAG node defined in TargetSelectionDAG.td
+// - isBarrier : the specified instruction stops control flow from executing
+//               the instruction immediately following it.
+let isBarrier = 1, isBranch = 1, isTerminator = 1 in
+def PseudoBR : Pseudo<(outs), (ins simm21_lsb0_jal:$imm20), [(br bb:$imm20)]>,
+               PseudoInstExpansion<(JAL X0, simm21_lsb0_jal:$imm20)>;
+
+let isBarrier = 1, isReturn = 1, isTerminator = 1 in
+def PseudoRET : Pseudo<(outs), (ins), [(ltumnfriscv_ret_flag)]>,
+                PseudoInstExpansion<(JALR X0, X1, 0)>;
+
+// PseudoCALL is a pseudo instruction which will eventually expand to auipc
+// and jalr while encoding.
+let isCall = 1, Defs = [X1], isCodeGenOnly = 0, Size = 8 in
+def PseudoCALL : Pseudo<(outs), (ins call_symbol:$func), []> {
+  let AsmString = "call\t$func";
+}
+
+// Note: tglobaladdr defined in TargetSelectionDAG.td
+def : Pat<(ltumnfriscv_call tglobaladdr:$func), (PseudoCALL tglobaladdr:$func)>;
