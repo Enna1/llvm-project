@@ -17,6 +17,10 @@ void LtumnfRISCVFrameLowering::emitPrologue(MachineFunction &MF,
   const MachineFrameInfo &MFI = MF.getFrameInfo();
   uint64_t StackSize = alignTo(MFI.getStackSize(), getStackAlign());
   Register SPReg = LtumnfRISCV::X2;
+
+  if (StackSize == 0)
+    return;
+
   // FIXME: handle StackSize out of range simm12, refactor with adjustReg()
   BuildMI(MBB, MBBI, DL, TII.get(LtumnfRISCV::ADDI), SPReg)
       .addReg(SPReg)
