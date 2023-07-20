@@ -28,6 +28,10 @@ public:
                             int FrameIndex, const TargetRegisterClass *RC,
                             const TargetRegisterInfo *TRI,
                             Register VReg) const override;
+
+  void copyPhysReg(MachineBasicBlock &MBB, MachineBasicBlock::iterator MBBI,
+                   const DebugLoc &DL, MCRegister DstReg, MCRegister SrcReg,
+                   bool KillSrc) const override;
 };
 
 } // end namespace llvm

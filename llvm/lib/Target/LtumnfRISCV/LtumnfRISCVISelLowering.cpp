@@ -19,6 +19,9 @@ LtumnfRISCVTargetLowering::LtumnfRISCVTargetLowering(
 
   setStackPointerRegisterToSaveRestore(LtumnfRISCV::X2);
 
+  for (auto N : {ISD::EXTLOAD, ISD::SEXTLOAD, ISD::ZEXTLOAD})
+    setLoadExtAction(N, XLenVT, MVT::i1, Promote);
+
   // TODO: add all necessary setOperationAction calls.
 
   // Function alignments

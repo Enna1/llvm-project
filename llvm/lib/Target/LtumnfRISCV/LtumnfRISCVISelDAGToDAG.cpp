@@ -92,6 +92,25 @@ bool LtumnfRISCVDAGToDAGISel::SelectAddrRegImm(SDValue Addr, SDValue &Base,
   SDLoc DL(Addr);
   MVT VT = Addr.getSimpleValueType();
 
+  if (isa<ConstantSDNode>(Addr)) {
+    int64_t CVal = cast<ConstantSDNode>(Addr)->getSExtValue();
+    int64_t Lo12 = SignExtend64<12>(CVal);
+    int64_t Hi = (uint64_t)CVal - (uint64_t)Lo12;
+    if (isInt<32>(Hi)) {
+      if (Hi) {
+        int64_t Hi20 = (Hi >> 12) & 0xfffff;
+        Base = SDValue(
+            CurDAG->getMachineNode(LtumnfRISCV::LUI, DL, VT,
+                                  CurDAG->getTargetConstant(Hi20, DL, VT)),
+            0);
+      } else {
+        Base = CurDAG->getRegister(LtumnfRISCV::X0, VT);
+      }
+      Offset = CurDAG->getTargetConstant(Lo12, DL, VT);
+      return true;
+    }
+  }
+
   Base = Addr;
   Offset = CurDAG->getTargetConstant(0, DL, VT);
   return true;

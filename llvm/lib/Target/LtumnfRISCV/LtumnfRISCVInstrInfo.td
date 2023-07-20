@@ -453,11 +453,65 @@ def JALR : RVInstI<0b000, OPC_JALR, (outs GPR:$rd),
 
 /// Loads and Stores instructions
 
+def LB : RVInstI<0b000, OPC_LOAD, (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                 "lb", "$rd, ${imm12}(${rs1})", []>;
+def : Pat<(sextloadi8 (AddrRegImm GPR:$rs1, simm12:$imm12)),
+          (LB GPR:$rs1, simm12:$imm12)>;
+def : Pat<(extloadi8 (AddrRegImm GPR:$rs1, simm12:$imm12)),
+          (LB GPR:$rs1, simm12:$imm12)>;
+
+def LH : RVInstI<0b001, OPC_LOAD, (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                 "lh", "$rd, ${imm12}(${rs1})", []>;
+def : Pat<(sextloadi16 (AddrRegImm GPR:$rs1, simm12:$imm12)),
+          (LH GPR:$rs1, simm12:$imm12)>;
+def : Pat<(extloadi16 (AddrRegImm GPR:$rs1, simm12:$imm12)),
+          (LH GPR:$rs1, simm12:$imm12)>;
+
+def LBU : RVInstI<0b100, OPC_LOAD, (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                 "lbu", "$rd, ${imm12}(${rs1})", []>;
+def : Pat<(zextloadi8 (AddrRegImm GPR:$rs1, simm12:$imm12)),
+          (LBU GPR:$rs1, simm12:$imm12)>;
+
+def LHU : RVInstI<0b101, OPC_LOAD, (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                 "lhu", "$rd, ${imm12}(${rs1})", []>;
+def : Pat<(zextloadi16 (AddrRegImm GPR:$rs1, simm12:$imm12)),
+          (LHU GPR:$rs1, simm12:$imm12)>;
+
+def LW : RVInstI<0b010, OPC_LOAD, (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                 "lw", "$rd, ${imm12}(${rs1})", []>;
+def : Pat<(i64 (sextloadi32 (AddrRegImm GPR:$rs1, simm12:$imm12))),
+          (LW GPR:$rs1, simm12:$imm12)>;
+def : Pat<(i64 (extloadi32 (AddrRegImm GPR:$rs1, simm12:$imm12))),
+          (LW GPR:$rs1, simm12:$imm12)>;
+
+def LWU : RVInstI<0b110, OPC_LOAD, (outs GPR:$rd), (ins GPR:$rs1, simm12:$imm12),
+                 "lwu", "$rd, ${imm12}(${rs1})", []>;
+def : Pat<(i64 (zextloadi32 (AddrRegImm GPR:$rs1, simm12:$imm12))),
+          (LWU GPR:$rs1, simm12:$imm12)>;
+
 def LD : RVInstI<0b011, OPC_LOAD, (outs GPR:$rd),
                  (ins GPR:$rs1, simm12:$imm12), "ld", "$rd, ${imm12}(${rs1})",
                  []>;
 def : Pat<(i64 (load (AddrRegImm GPR:$rs1, simm12:$imm12))),
           (LD GPR:$rs1, simm12:$imm12)>;
+
+def SB : RVInstS<0b000, OPC_STORE, (outs),
+                 (ins GPR:$rs2, GPR:$rs1, simm12:$imm12),
+                 "sb", "$rs2, ${imm12}(${rs1})", []>;
+def : Pat<(truncstorei8 GPR:$rs2, (AddrRegImm GPR:$rs1, simm12:$imm12)),
+          (SB GPR:$rs2, GPR:$rs1, simm12:$imm12)>;
+
+def SH : RVInstS<0b001, OPC_STORE, (outs),
+                 (ins GPR:$rs2, GPR:$rs1, simm12:$imm12),
+                 "sh", "$rs2, ${imm12}(${rs1})", []>;
+def : Pat<(truncstorei16 GPR:$rs2, (AddrRegImm GPR:$rs1, simm12:$imm12)),
+          (SH GPR:$rs2, GPR:$rs1, simm12:$imm12)>;
+
+def SW : RVInstS<0b010, OPC_STORE, (outs),
+                 (ins GPR:$rs2, GPR:$rs1, simm12:$imm12),
+                 "sh", "$rs2, ${imm12}(${rs1})", []>;
+def : Pat<(truncstorei32 (i64 GPR:$rs2), (AddrRegImm GPR:$rs1, simm12:$imm12)),
+          (SW GPR:$rs2, GPR:$rs1, simm12:$imm12)>;
 
 def SD : RVInstS<0b011, OPC_STORE, (outs),
                  (ins GPR:$rs2, GPR:$rs1, simm12:$imm12),

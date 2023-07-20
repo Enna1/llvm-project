@@ -55,3 +55,16 @@ void LtumnfRISCVInstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
       .addImm(0)
       .addMemOperand(MMO);
 }
+
+void LtumnfRISCVInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
+                                 MachineBasicBlock::iterator MBBI,
+                                 const DebugLoc &DL, MCRegister DstReg,
+                                 MCRegister SrcReg, bool KillSrc) const {
+  if (!LtumnfRISCV::GPRRegClass.contains(DstReg, SrcReg)) {
+    llvm_unreachable("Impossible reg-to-reg copy");
+  }
+
+  BuildMI(MBB, MBBI, DL, get(LtumnfRISCV::ADDI), DstReg)
+      .addReg(SrcReg, getKillRegState(KillSrc))
+      .addImm(0);
+}
