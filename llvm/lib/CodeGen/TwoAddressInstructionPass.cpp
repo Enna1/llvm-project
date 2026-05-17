@@ -461,12 +461,14 @@ bool TwoAddressInstructionImpl::isKilled(MachineInstr &MI, Register Reg,
   MachineInstr *DefMI = &MI;
   while (true) {
     // All uses of physical registers are likely to be kills.
-    if (Reg.isPhysical() && (allowFalsePositives || MRI->hasOneUse(Reg)))
-      return true;
+    if (Reg.isPhysical()) {
+      if (allowFalsePositives || isPlainlyKilled(DefMI, Reg))
+        return true;
+      return MRI->hasOneUse(Reg);
+    }
+
     if (!isPlainlyKilled(DefMI, Reg))
       return false;
-    if (Reg.isPhysical())
-      return true;
     MachineRegisterInfo::def_iterator Begin = MRI->def_begin(Reg);
     // If there are multiple defs, we can't do a simple analysis, so just
     // go with what the kill flag says.
