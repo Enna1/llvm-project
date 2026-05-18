@@ -141,25 +141,8 @@ class TwoAddressInstructionImpl {
         Map.clear();
       }
 
-      while (NextToProcess != MBB->end() && &*NextToProcess != &CurMI) {
-        MachineInstr &MI = *NextToProcess++;
-        if (MI.isDebugValue())
-          continue;
-
-        for (MachineOperand &MO : MI.operands()) {
-          if (!MO.isReg() || !MO.isDef())
-            continue;
-
-          Register Reg = MO.getReg();
-          if (!Reg)
-            continue;
-
-          auto [It, Inserted] = Map.try_emplace(Reg, &MI);
-          MachineInstr *&SingleDef = It->second;
-          if (!Inserted && SingleDef != &MI)
-            SingleDef = nullptr;
-        }
-      }
+      while (NextToProcess != MBB->end() && &*NextToProcess != &CurMI)
+        recordDefs(*NextToProcess++);
     }
 
     MachineInstr *lookup(Register Reg, MachineBasicBlock &Block,
@@ -167,6 +150,28 @@ class TwoAddressInstructionImpl {
       advanceTo(Block, CurMI);
       auto It = Map.find(Reg);
       return It == Map.end() ? nullptr : It->second;
+    }
+
+    void absorb(MachineInstr &MI) {
+      if (MBB)
+        recordDefs(MI);
+    }
+
+  private:
+    void recordDefs(MachineInstr &MI) {
+      if (MI.isDebugValue())
+        return;
+      for (MachineOperand &MO : MI.operands()) {
+        if (!MO.isReg() || !MO.isDef())
+          continue;
+        Register Reg = MO.getReg();
+        if (!Reg)
+          continue;
+        auto [It, Inserted] = Map.try_emplace(Reg, &MI);
+        MachineInstr *&SingleDef = It->second;
+        if (!Inserted && SingleDef != &MI)
+          SingleDef = nullptr;
+      }
     }
   };
 
@@ -1708,6 +1713,7 @@ void TwoAddressInstructionImpl::processTiedPairs(MachineInstr *MI,
     --PrevMI;
     DistanceMap.insert(std::make_pair(&*PrevMI, Dist));
     DistanceMap[MI] = ++Dist;
+    SingleDefIndex.absorb(*PrevMI);
 
     if (LIS) {
       LastCopyIdx = LIS->InsertMachineInstrInMaps(*PrevMI).getRegSlot();
@@ -2065,7 +2071,6 @@ bool TwoAddressInstructionImpl::run() {
       // since most instructions do not have tied operands.
       TiedOperands.clear();
       removeClobberedSrcRegMap(&*mi);
-      SingleDefIndex.reset();
       mi = nmi;
     }
   }
