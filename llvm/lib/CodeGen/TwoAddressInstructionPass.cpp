@@ -124,26 +124,25 @@ class TwoAddressInstructionImpl {
   // registers. e.g. r1 = move v1024.
   DenseMap<Register, Register> DstRegMap;
 
-  // Index of single defining instructions in an MBB. A missing entry means the
-  // register has no non-debug def in the block; a null value means multiple
-  // different instructions define it. This is intentionally a short-lived
-  // helper so it cannot outlive mutations of the block it indexes.
   struct SingleDefInMBBIndex {
-    bool Built = false;
-    SmallDenseMap<Register, MachineInstr *, 32> Map;
+    MachineBasicBlock *MBB = nullptr;
+    MachineBasicBlock::iterator NextToProcess;
+    SmallDenseMap<Register, MachineInstr *, 16> Map;
 
     void reset() {
-      Built = false;
+      MBB = nullptr;
       Map.clear();
     }
 
-    void build(MachineBasicBlock &MBB) {
-      if (Built)
-        return;
-      Built = true;
-      Map.reserve(MBB.size());
+    void advanceTo(MachineBasicBlock &Block, MachineInstr &CurMI) {
+      if (MBB != &Block) {
+        MBB = &Block;
+        NextToProcess = Block.begin();
+        Map.clear();
+      }
 
-      for (MachineInstr &MI : MBB) {
+      while (NextToProcess != MBB->end() && &*NextToProcess != &CurMI) {
+        MachineInstr &MI = *NextToProcess++;
         if (MI.isDebugValue())
           continue;
 
@@ -163,18 +162,20 @@ class TwoAddressInstructionImpl {
       }
     }
 
-    MachineInstr *lookup(Register Reg, MachineBasicBlock &MBB) {
-      build(MBB);
+    MachineInstr *lookup(Register Reg, MachineBasicBlock &Block,
+                         MachineInstr &CurMI) {
+      advanceTo(Block, CurMI);
       auto It = Map.find(Reg);
       return It == Map.end() ? nullptr : It->second;
     }
   };
 
-  MachineInstr *getSingleDef(Register Reg,
-                             SingleDefInMBBIndex &SingleDefIndex) const;
+  SingleDefInMBBIndex SingleDefIndex;
+
+  MachineInstr *getSingleDef(Register Reg, MachineInstr &CurMI);
 
   bool isRevCopyChain(Register FromReg, Register ToReg, int Maxlen,
-                      SingleDefInMBBIndex &SingleDefIndex);
+                      MachineInstr &CurMI);
 
   bool noUseAfterLastDef(Register Reg, unsigned Dist, unsigned &LastDef);
 
@@ -201,8 +202,7 @@ class TwoAddressInstructionImpl {
   bool regOverlapsSet(const SmallVectorImpl<Register> &Set, Register Reg) const;
 
   bool isProfitableToCommute(Register RegA, Register RegB, Register RegC,
-                             MachineInstr *MI, unsigned Dist,
-                             SingleDefInMBBIndex &SingleDefIndex);
+                             MachineInstr *MI, unsigned Dist);
 
   bool commuteInstruction(MachineInstr *MI, unsigned DstIdx,
                           unsigned RegBIdx, unsigned RegCIdx, unsigned Dist);
@@ -341,9 +341,9 @@ TwoAddressInstructionImpl::TwoAddressInstructionImpl(MachineFunction &Func,
 }
 
 /// Return the MachineInstr* if it is the single def of the Reg in current BB.
-MachineInstr *TwoAddressInstructionImpl::getSingleDef(
-    Register Reg, SingleDefInMBBIndex &SingleDefIndex) const {
-  return SingleDefIndex.lookup(Reg, *MBB);
+MachineInstr *TwoAddressInstructionImpl::getSingleDef(Register Reg,
+                                                      MachineInstr &CurMI) {
+  return SingleDefIndex.lookup(Reg, *MBB, CurMI);
 }
 
 static bool getTiedUse(Register DefReg, MachineInstr *MI,
@@ -361,12 +361,12 @@ static bool getTiedUse(Register DefReg, MachineInstr *MI,
 /// %Tmp2 = copy %ToReg;
 /// MaxLen specifies the maximum length of the copy chain the func
 /// can walk through.
-bool TwoAddressInstructionImpl::isRevCopyChain(
-    Register FromReg, Register ToReg, int Maxlen,
-    SingleDefInMBBIndex &SingleDefIndex) {
+bool TwoAddressInstructionImpl::isRevCopyChain(Register FromReg, Register ToReg,
+                                               int Maxlen,
+                                               MachineInstr &CurMI) {
   Register TmpReg = FromReg;
   for (int i = 0; i < Maxlen; i++) {
-    MachineInstr *Def = getSingleDef(TmpReg, SingleDefIndex);
+    MachineInstr *Def = getSingleDef(TmpReg, CurMI);
     if (!Def)
       return false;
 
@@ -692,9 +692,11 @@ bool TwoAddressInstructionImpl::regOverlapsSet(
 
 /// Return true if it's potentially profitable to commute the two-address
 /// instruction that's being processed.
-bool TwoAddressInstructionImpl::isProfitableToCommute(
-    Register RegA, Register RegB, Register RegC, MachineInstr *MI,
-    unsigned Dist, SingleDefInMBBIndex &SingleDefIndex) {
+bool TwoAddressInstructionImpl::isProfitableToCommute(Register RegA,
+                                                      Register RegB,
+                                                      Register RegC,
+                                                      MachineInstr *MI,
+                                                      unsigned Dist) {
   if (OptLevel == CodeGenOptLevel::None)
     return false;
 
@@ -777,10 +779,10 @@ bool TwoAddressInstructionImpl::isProfitableToCommute(
   // To more generally minimize register copies, ideally the logic of two addr
   // instruction pass should be integrated with register allocation pass where
   // interference graph is available.
-  if (isRevCopyChain(RegC, RegA, MaxDataFlowEdge, SingleDefIndex))
+  if (isRevCopyChain(RegC, RegA, MaxDataFlowEdge, *MI))
     return true;
 
-  if (isRevCopyChain(RegB, RegA, MaxDataFlowEdge, SingleDefIndex))
+  if (isRevCopyChain(RegB, RegA, MaxDataFlowEdge, *MI))
     return false;
 
   // Look for other target specific commute preference.
@@ -1338,8 +1340,6 @@ bool TwoAddressInstructionImpl::tryInstructionCommute(MachineInstr *MI,
   bool MadeChange = false;
   Register DstOpReg = MI->getOperand(DstOpIdx).getReg();
   Register BaseOpReg = MI->getOperand(BaseOpIdx).getReg();
-  // Built lazily only if reverse-copy-chain profitability needs it.
-  SingleDefInMBBIndex SingleDefIndex;
   unsigned OpsNum = MI->getDesc().getNumOperands();
   unsigned OtherOpIdx = MI->getDesc().getNumDefs();
   for (; OtherOpIdx < OpsNum; OtherOpIdx++) {
@@ -1359,8 +1359,8 @@ bool TwoAddressInstructionImpl::tryInstructionCommute(MachineInstr *MI,
     bool OtherOpKilled = isKilled(*MI, OtherOpReg, false);
     bool DoCommute = !BaseOpKilled && OtherOpKilled;
 
-    if (!DoCommute && isProfitableToCommute(DstOpReg, BaseOpReg, OtherOpReg, MI,
-                                            Dist, SingleDefIndex)) {
+    if (!DoCommute &&
+        isProfitableToCommute(DstOpReg, BaseOpReg, OtherOpReg, MI, Dist)) {
       DoCommute = true;
       AggressiveCommute = true;
     }
@@ -1382,7 +1382,6 @@ bool TwoAddressInstructionImpl::tryInstructionCommute(MachineInstr *MI,
       // Resamples OpsNum in case the number of operands was reduced. This
       // happens with X86.
       OpsNum = MI->getDesc().getNumOperands();
-      SingleDefIndex.reset();
     }
   }
   return MadeChange;
@@ -1944,6 +1943,7 @@ bool TwoAddressInstructionImpl::run() {
     SrcRegMap.clear();
     DstRegMap.clear();
     Processed.clear();
+    SingleDefIndex.reset();
     for (MachineBasicBlock::iterator mi = MBB->begin(), me = MBB->end();
          mi != me; ) {
       MachineBasicBlock::iterator nmi = std::next(mi);
@@ -1958,6 +1958,7 @@ bool TwoAddressInstructionImpl::run() {
       if (mi->isRegSequence()) {
         eliminateRegSequence(mi);
         MadeChange = true;
+        SingleDefIndex.reset();
       }
 
       DistanceMap.insert(std::make_pair(&*mi, ++Dist));
@@ -1994,6 +1995,7 @@ bool TwoAddressInstructionImpl::run() {
             TiedOperands.clear();
             removeClobberedSrcRegMap(&*mi);
             mi = nmi;
+            SingleDefIndex.reset();
             continue;
           }
         }
@@ -2063,6 +2065,7 @@ bool TwoAddressInstructionImpl::run() {
       // since most instructions do not have tied operands.
       TiedOperands.clear();
       removeClobberedSrcRegMap(&*mi);
+      SingleDefIndex.reset();
       mi = nmi;
     }
   }
