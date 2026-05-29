@@ -28,7 +28,6 @@
 
 #include "llvm/CodeGen/SpillPlacement.h"
 #include "llvm/ADT/BitVector.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/EdgeBundles.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
@@ -88,10 +87,6 @@ struct SpillPlacement::Node {
   /// bundles. The weights are all positive block frequencies.
   LinkVector Links;
 
-  /// LinksDirty - True when Links may contain multiple entries for the same
-  /// bundle and therefore needs to be compacted before use.
-  bool LinksDirty;
-
   /// SumLinkWeights - Cached sum of the weights of all links + ThresHold.
   BlockFrequency SumLinkWeights;
 
@@ -117,7 +112,6 @@ struct SpillPlacement::Node {
     Value = 0;
     SumLinkWeights = Threshold;
     Links.clear();
-    LinksDirty = false;
   }
 
   /// addLink - Add a link to bundle b with weight w.
@@ -125,34 +119,14 @@ struct SpillPlacement::Node {
     // Update cached sum.
     SumLinkWeights += w;
 
-    // There can be multiple links to the same bundle. Append the new entry
-    // here and defer the merging of duplicate bundle entries to compactLinks().
-    Links.push_back(std::make_pair(w, b));
-    LinksDirty = true;
-  }
-
-  /// compactLinks - Merge multiple entries for the same bundle in Links.
-  void compactLinks() {
-    if (!LinksDirty)
-      return;
-    llvm::sort(Links, [](const std::pair<BlockFrequency, unsigned> &A,
-                         const std::pair<BlockFrequency, unsigned> &B) {
-      return A.second < B.second;
-    });
-    auto Out = Links.begin();
-    for (auto It = Links.begin(), E = Links.end(); It != E;) {
-      BlockFrequency W = It->first;
-      unsigned B = It->second;
-      auto Next = std::next(It);
-      while (Next != E && Next->second == B) {
-        W += Next->first;
-        ++Next;
+    // There can be multiple links to the same bundle, add them up.
+    for (std::pair<BlockFrequency, unsigned> &L : Links)
+      if (L.second == b) {
+        L.first += w;
+        return;
       }
-      *Out++ = std::make_pair(W, B);
-      It = Next;
-    }
-    Links.erase(Out, Links.end());
-    LinksDirty = false;
+    // This must be the first link to b.
+    Links.push_back(std::make_pair(w, b));
   }
 
   /// addBias - Bias this node.
@@ -175,8 +149,6 @@ struct SpillPlacement::Node {
   /// update - Recompute Value from Bias and Links. Return true when node
   /// preference changes.
   bool update(const Node nodes[], BlockFrequency Threshold) {
-    compactLinks();
-
     // Compute the weighted sum of inputs.
     BlockFrequency SumN = BiasN;
     BlockFrequency SumP = BiasP;
