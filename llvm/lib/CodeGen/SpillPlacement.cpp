@@ -114,21 +114,6 @@ struct SpillPlacement::Node {
     Links.clear();
   }
 
-  /// addLink - Add a link to bundle b with weight w.
-  void addLink(unsigned b, BlockFrequency w) {
-    // Update cached sum.
-    SumLinkWeights += w;
-
-    // There can be multiple links to the same bundle, add them up.
-    for (std::pair<BlockFrequency, unsigned> &L : Links)
-      if (L.second == b) {
-        L.first += w;
-        return;
-      }
-    // This must be the first link to b.
-    Links.push_back(std::make_pair(w, b));
-  }
-
   /// addBias - Bias this node.
   void addBias(BlockFrequency freq, BorderConstraint direction) {
     switch (direction) {
@@ -334,13 +319,58 @@ void SpillPlacement::addLinks(ArrayRef<unsigned> Links) {
       continue;
     activate(ib);
     activate(ob);
-    BlockFrequency Freq = BlockFrequencies[Number];
-    nodes[ib].addLink(ob, Freq);
-    nodes[ob].addLink(ib, Freq);
+
+    PendingEdge E;
+    if (ib < ob) {
+      E.First = ib;
+      E.Second = ob;
+    } else {
+      E.First = ob;
+      E.Second = ib;
+    }
+    E.Freq = BlockFrequencies[Number];
+    PendingEdges.push_back(E);
   }
+
+  if (!PendingEdges.empty())
+    EdgesFlushed = false;
+}
+
+void SpillPlacement::flushPendingEdges() {
+  if (EdgesFlushed)
+    return;
+  EdgesFlushed = true;
+  if (PendingEdges.empty())
+    return;
+
+  llvm::sort(PendingEdges, [](const PendingEdge &A, const PendingEdge &B) {
+    if (A.First != B.First)
+      return A.First < B.First;
+    return A.Second < B.Second;
+  });
+
+  size_t i = 0, n = PendingEdges.size();
+  while (i < n) {
+    size_t j = i + 1;
+    BlockFrequency Freq = PendingEdges[i].Freq;
+    while (j < n && PendingEdges[j].First == PendingEdges[i].First &&
+           PendingEdges[j].Second == PendingEdges[i].Second) {
+      Freq += PendingEdges[j].Freq;
+      ++j;
+    }
+    unsigned A = PendingEdges[i].First;
+    unsigned B = PendingEdges[i].Second;
+    nodes[A].Links.emplace_back(Freq, B);
+    nodes[A].SumLinkWeights += Freq;
+    nodes[B].Links.emplace_back(Freq, A);
+    nodes[B].SumLinkWeights += Freq;
+    i = j;
+  }
+  PendingEdges.clear();
 }
 
 bool SpillPlacement::scanActiveBundles() {
+  flushPendingEdges();
   RecentPositive.clear();
   for (unsigned n : ActiveNodes->set_bits()) {
     update(n);
@@ -364,6 +394,7 @@ bool SpillPlacement::update(unsigned n) {
 /// iterate - Repeatedly update the Hopfield nodes until stability or the
 /// maximum number of iterations is reached.
 void SpillPlacement::iterate() {
+  flushPendingEdges();
   // We do not need to push those node in the todolist.
   // They are already been proceeded as part of the previous iteration.
   RecentPositive.clear();
@@ -385,6 +416,8 @@ void SpillPlacement::iterate() {
 void SpillPlacement::prepare(BitVector &RegBundles) {
   RecentPositive.clear();
   TodoList.clear();
+  PendingEdges.clear();
+  EdgesFlushed = true;
   // Reuse RegBundles as our ActiveNodes vector.
   ActiveNodes = &RegBundles;
   ActiveNodes->clear();

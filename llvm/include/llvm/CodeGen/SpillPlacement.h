@@ -68,6 +68,15 @@ class SpillPlacement {
   // Block frequencies are computed once. Indexed by block number.
   SmallVector<BlockFrequency, 8> BlockFrequencies;
 
+  struct PendingEdge {
+    unsigned First;
+    unsigned Second;
+    BlockFrequency Freq;
+  };
+  SmallVector<PendingEdge, 32> PendingEdges;
+
+  bool EdgesFlushed = true;
+
   /// Decision threshold. A node gets the output value 0 if the weighted sum of
   /// its inputs falls in the open interval (-Threshold;Threshold).
   BlockFrequency Threshold;
@@ -172,6 +181,8 @@ private:
            MachineBlockFrequencyInfo *MBFI);
   void activate(unsigned n);
   void setThreshold(BlockFrequency Entry);
+
+  void flushPendingEdges();
 
   bool update(unsigned n);
 };
