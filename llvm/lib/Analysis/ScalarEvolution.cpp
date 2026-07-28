@@ -6506,9 +6506,17 @@ APInt ScalarEvolution::getConstantMultiple(const SCEV *S,
     return I->second;
 
   APInt Result = getConstantMultipleImpl(S, CtxI);
+  // The cached multiple is IR-derived for a SCEVUnknown; track it so that
+  // forgetLoop() invalidates it.
+  registerUnknownWithIRDerivedProperty(S);
   auto InsertPair = ConstantMultipleCache.insert({S, Result});
   assert(InsertPair.second && "Should insert a new key");
   return InsertPair.first->second;
+}
+
+void ScalarEvolution::registerUnknownWithIRDerivedProperty(const SCEV *S) {
+  if (isa<SCEVUnknown>(S))
+    UnknownsWithIRDerivedProperties.insert(S);
 }
 
 APInt ScalarEvolution::getNonZeroConstantMultiple(const SCEV *S) {
@@ -8715,6 +8723,7 @@ void ScalarEvolution::forgetAllLoops() {
   ExprValueMap.clear();
   HasRecMap.clear();
   ConstantMultipleCache.clear();
+  UnknownsWithIRDerivedProperties.clear();
   PredicatedSCEVRewrites.clear();
   FoldCache.clear();
   FoldCacheUser.clear();
@@ -8743,7 +8752,12 @@ void ScalarEvolution::visitAndClearUsers(
 
 void ScalarEvolution::forgetLoop(const Loop *L) {
   SmallVector<const Loop *, 16> LoopWorklist(1, L);
-  SmallVector<SCEVUse, 16> ToForget;
+  // A SCEVUnknown's range/constant-multiple/value-at-scope cache can depend on
+  // this loop's trip count through the underlying IR, but that dependency is
+  // not visible in the SCEV operand graph. Conservatively seed every such
+  // SCEVUnknown as an invalidation root so the stale caches are dropped.
+  SmallVector<SCEVUse, 16> ToForget(UnknownsWithIRDerivedProperties.begin(),
+                                    UnknownsWithIRDerivedProperties.end());
 
   // Iterate over all the loops and sub-loops to drop SCEV information.
   while (!LoopWorklist.empty()) {
@@ -10118,6 +10132,9 @@ const SCEV *ScalarEvolution::computeExitCountExhaustively(const Loop *L,
 }
 
 const SCEV *ScalarEvolution::getSCEVAtScope(const SCEV *V, const Loop *L) {
+  // The value-at-scope cache below folds V using loop trip counts, so a
+  // SCEVUnknown entry is IR-derived; track it for forgetLoop().
+  registerUnknownWithIRDerivedProperty(V);
   SmallVector<std::pair<const Loop *, const SCEV *>, 2> &Values =
       ValuesAtScopes[V];
   // Check to see if we've folded this expression at this loop before.
@@ -14103,6 +14120,8 @@ ScalarEvolution::ScalarEvolution(ScalarEvolution &&Arg)
       PendingLoopPredicates(std::move(Arg.PendingLoopPredicates)),
       PendingMerges(std::move(Arg.PendingMerges)),
       ConstantMultipleCache(std::move(Arg.ConstantMultipleCache)),
+      UnknownsWithIRDerivedProperties(
+          std::move(Arg.UnknownsWithIRDerivedProperties)),
       BackedgeTakenCounts(std::move(Arg.BackedgeTakenCounts)),
       PredicatedBackedgeTakenCounts(
           std::move(Arg.PredicatedBackedgeTakenCounts)),
@@ -14682,6 +14701,7 @@ void ScalarEvolution::forgetMemoizedResults(ArrayRef<SCEVUse> SCEVs) {
 }
 
 void ScalarEvolution::forgetMemoizedResultsImpl(const SCEV *S) {
+  UnknownsWithIRDerivedProperties.erase(S);
   LoopDispositions.erase(S);
   BlockDispositions.erase(S);
   UnsignedRanges.erase(S);

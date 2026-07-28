@@ -73,6 +73,22 @@ static std::optional<APInt> computeConstantDifference(ScalarEvolution &SE,
       const SCEV *FoundRHS) {
     return SE.isImpliedCond(Pred, LHS, RHS, FoundPred, FoundLHS, FoundRHS);
   }
+
+  static bool hasUnsignedRange(const ScalarEvolution &SE, const SCEV *S) {
+    return SE.UnsignedRanges.contains(S);
+  }
+
+  static bool hasSignedRange(const ScalarEvolution &SE, const SCEV *S) {
+    return SE.SignedRanges.contains(S);
+  }
+
+  static bool hasConstantMultiple(const ScalarEvolution &SE, const SCEV *S) {
+    return SE.ConstantMultipleCache.contains(S);
+  }
+
+  static bool hasValueAtScope(const ScalarEvolution &SE, const SCEV *S) {
+    return SE.ValuesAtScopes.contains(S);
+  }
 };
 
 TEST_F(ScalarEvolutionsTest, SCEVUnknownRAUW) {
@@ -1709,7 +1725,8 @@ TEST_F(ScalarEvolutionsTest, ForgetValueWithOverflowInst) {
   });
 }
 
-TEST_F(ScalarEvolutionsTest, ForgetLoopPreservesUnrelatedCachesInLoopBody) {
+TEST_F(ScalarEvolutionsTest,
+       ForgetLoopPreservesUnrelatedSCEVButNotIRDerivedCaches) {
   LLVMContext C;
   SMDiagnostic Err;
   std::unique_ptr<Module> M =
@@ -1719,8 +1736,11 @@ TEST_F(ScalarEvolutionsTest, ForgetLoopPreservesUnrelatedCachesInLoopBody) {
                           "loop: "
                           "  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ] "
                           "  %iv.next = add nsw i32 %iv, 1 "
-                          "  %cmp = icmp slt i32 %iv, %n "
-                          "  br i1 %cmp, label %loop, label %exit "
+                          "  %unrelated = icmp eq i32 %n, 0 "
+                          "  %range = icmp slt i32 %iv, %n "
+                          "  %multiple = icmp sgt i32 %iv, %n "
+                          "  %at.scope = icmp ne i32 %iv, %n "
+                          "  br i1 %range, label %loop, label %exit "
                           "exit: "
                           "  ret void "
                           "} ",
@@ -1731,20 +1751,48 @@ TEST_F(ScalarEvolutionsTest, ForgetLoopPreservesUnrelatedCachesInLoopBody) {
 
   runWithSE(*M, "foo", [](Function &F, LoopInfo &LI, ScalarEvolution &SE) {
     auto *IV = getInstructionByName(F, "iv");
-    auto *Cmp = getInstructionByName(F, "cmp");
+    auto *Unrelated = getInstructionByName(F, "unrelated");
+    auto *Range = getInstructionByName(F, "range");
+    auto *Multiple = getInstructionByName(F, "multiple");
+    auto *AtScope = getInstructionByName(F, "at.scope");
 
     const SCEV *IVScev = SE.getSCEV(IV);
     EXPECT_NE(IVScev, nullptr);
     EXPECT_TRUE(isa<SCEVAddRecExpr>(IVScev));
 
-    const SCEV *CmpScev = SE.getSCEV(Cmp);
-    EXPECT_NE(CmpScev, nullptr);
-    EXPECT_TRUE(isa<SCEVUnknown>(CmpScev));
+    const SCEV *UnrelatedScev = SE.getSCEV(Unrelated);
+    EXPECT_NE(UnrelatedScev, nullptr);
+    EXPECT_TRUE(isa<SCEVUnknown>(UnrelatedScev));
+
+    const SCEV *RangeScev = SE.getSCEV(Range);
+    const SCEV *MultipleScev = SE.getSCEV(Multiple);
+    const SCEV *AtScopeScev = SE.getSCEV(AtScope);
+    EXPECT_TRUE(isa<SCEVUnknown>(RangeScev));
+    EXPECT_TRUE(isa<SCEVUnknown>(MultipleScev));
+    EXPECT_TRUE(isa<SCEVUnknown>(AtScopeScev));
+
+    [[maybe_unused]] auto UnsignedRange = SE.getUnsignedRange(RangeScev);
+    [[maybe_unused]] auto SignedRange = SE.getSignedRange(RangeScev);
+    [[maybe_unused]] auto ConstantMultiple =
+        SE.getConstantMultiple(MultipleScev);
+    [[maybe_unused]] const SCEV *ValueAtScope =
+        SE.getSCEVAtScope(AtScopeScev, nullptr);
+    EXPECT_TRUE(hasUnsignedRange(SE, RangeScev));
+    EXPECT_TRUE(hasSignedRange(SE, RangeScev));
+    EXPECT_TRUE(hasConstantMultiple(SE, MultipleScev));
+    EXPECT_TRUE(hasValueAtScope(SE, AtScopeScev));
 
     Loop *L = *LI.begin();
     SE.forgetLoop(L);
     EXPECT_EQ(SE.getExistingSCEV(IV), nullptr);
-    EXPECT_EQ(SE.getExistingSCEV(Cmp), CmpScev);
+    EXPECT_EQ(SE.getExistingSCEV(Unrelated), UnrelatedScev);
+    EXPECT_EQ(SE.getExistingSCEV(Range), nullptr);
+    EXPECT_EQ(SE.getExistingSCEV(Multiple), nullptr);
+    EXPECT_EQ(SE.getExistingSCEV(AtScope), nullptr);
+    EXPECT_FALSE(hasUnsignedRange(SE, RangeScev));
+    EXPECT_FALSE(hasSignedRange(SE, RangeScev));
+    EXPECT_FALSE(hasConstantMultiple(SE, MultipleScev));
+    EXPECT_FALSE(hasValueAtScope(SE, AtScopeScev));
   });
 }
 

@@ -1727,6 +1727,16 @@ private:
   /// Memoized values for the getConstantMultiple
   DenseMap<const SCEV *, APInt> ConstantMultipleCache;
 
+  /// SCEVUnknowns whose range, constant-multiple, or value-at-scope caches
+  /// were derived from the underlying IR. Those properties can depend on a
+  /// loop's trip count even though the dependency does not appear in the SCEV
+  /// operand graph, so forgetLoop() must treat these as invalidation roots.
+  SmallPtrSet<const SCEV *, 8> UnknownsWithIRDerivedProperties;
+
+  /// Record \p S in UnknownsWithIRDerivedProperties if it is a SCEVUnknown, so
+  /// that a cached IR-derived property gets invalidated by forgetLoop().
+  void registerUnknownWithIRDerivedProperty(const SCEV *S);
+
   /// Return the Value set from which the SCEV expr is generated.
   ArrayRef<Value *> getSCEVValues(const SCEV *S);
 
@@ -1971,6 +1981,8 @@ private:
     DenseMap<const SCEV *, ConstantRange> &Cache =
         Hint == HINT_RANGE_UNSIGNED ? UnsignedRanges : SignedRanges;
 
+    // Caching an IR-derived range for a SCEVUnknown; track it for forgetLoop().
+    registerUnknownWithIRDerivedProperty(S);
     auto Pair = Cache.insert_or_assign(S, std::move(CR));
     return Pair.first->second;
   }
