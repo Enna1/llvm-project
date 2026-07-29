@@ -1641,6 +1641,8 @@ public:
   };
 
 private:
+  class HiddenDependencyIndex;
+
   /// A CallbackVH to arrange for ScalarEvolution to be notified whenever a
   /// Value is deleted.
   class LLVM_ABI SCEVCallbackVH final : public CallbackVH {
@@ -1705,6 +1707,10 @@ private:
   /// This is a cache of the values we have analyzed so far.
   ValueExprMapType ValueExprMap;
 
+  /// Dependencies on IR values that were inspected while building a cached
+  /// SCEV, but are not represented in the final SCEV operand graph.
+  std::unique_ptr<HiddenDependencyIndex> HiddenDependencies;
+
   /// This is a cache for expressions that got folded to a different existing
   /// SCEV.
   DenseMap<FoldID, const SCEV *> FoldCache;
@@ -1726,16 +1732,6 @@ private:
 
   /// Memoized values for the getConstantMultiple
   DenseMap<const SCEV *, APInt> ConstantMultipleCache;
-
-  /// SCEVUnknowns whose range, constant-multiple, or value-at-scope caches
-  /// were derived from the underlying IR. Those properties can depend on a
-  /// loop's trip count even though the dependency does not appear in the SCEV
-  /// operand graph, so forgetLoop() must treat these as invalidation roots.
-  SmallPtrSet<const SCEV *, 8> UnknownsWithIRDerivedProperties;
-
-  /// Record \p S in UnknownsWithIRDerivedProperties if it is a SCEVUnknown, so
-  /// that a cached IR-derived property gets invalidated by forgetLoop().
-  void registerUnknownWithIRDerivedProperty(const SCEV *S);
 
   /// Return the Value set from which the SCEV expr is generated.
   ArrayRef<Value *> getSCEVValues(const SCEV *S);
@@ -1981,8 +1977,6 @@ private:
     DenseMap<const SCEV *, ConstantRange> &Cache =
         Hint == HINT_RANGE_UNSIGNED ? UnsignedRanges : SignedRanges;
 
-    // Caching an IR-derived range for a SCEVUnknown; track it for forgetLoop().
-    registerUnknownWithIRDerivedProperty(S);
     auto Pair = Cache.insert_or_assign(S, std::move(CR));
     return Pair.first->second;
   }
@@ -2032,7 +2026,8 @@ private:
   /// Collect operands of \p V for which SCEV expressions should be constructed
   /// first. Returns a SCEV directly if it can be constructed trivially for \p
   /// V.
-  const SCEV *getOperandsToCreate(Value *V, SmallVectorImpl<Value *> &Ops);
+  const SCEV *getOperandsToCreate(Value *V, SmallVectorImpl<Value *> &Ops,
+                                  SmallVectorImpl<Value *> &HiddenOps);
 
   /// Returns SCEV for the first operand of a phi if all phi operands have
   /// identical opcodes and operands.
@@ -2383,20 +2378,31 @@ private:
   /// Drop memoized information for all \p SCEVs.
   void forgetMemoizedResults(ArrayRef<SCEVUse> SCEVs);
 
+  /// Drop cached properties that may have been derived from mutable IR.
+  void forgetIRDerivedProperties();
+
   /// Helper for forgetMemoizedResults.
   void forgetMemoizedResultsImpl(const SCEV *S);
 
-  /// Iterate over instructions in \p Worklist and their users. Erase entries
-  /// from ValueExprMap and collect SCEV expressions in \p ToForget
-  void visitAndClearUsers(SmallVectorImpl<Instruction *> &Worklist,
-                          SmallPtrSetImpl<Instruction *> &Visited,
-                          SmallVectorImpl<SCEVUse> &ToForget);
+  /// Record IR dependencies of the V to S cache entry that are not represented
+  /// by the SCEV operand graph.
+  void registerHiddenDependencies(Value *V, const SCEV *S,
+                                  ArrayRef<Value *> HiddenOps = {});
+
+  /// Verify hidden dependencies against the original full def-use walk.
+  void verifyHiddenDependencies(Value *V, ArrayRef<SCEVUse> Roots) const;
+
+  /// Verify loop invalidation roots against the original header-PHI def-use
+  /// walk.
+  void verifyLoopHiddenDependencies(ArrayRef<Instruction *> HeaderPhis,
+                                    ArrayRef<SCEVUse> Roots) const;
 
   /// Erase Value from ValueExprMap and ExprValueMap.
   void eraseValueFromMap(Value *V);
 
   /// Insert V to S mapping into ValueExprMap and ExprValueMap.
-  void insertValueToMap(Value *V, const SCEV *S);
+  void insertValueToMap(Value *V, const SCEV *S,
+                        ArrayRef<Value *> HiddenOps = {});
 
   /// Return false iff given SCEV contains a SCEVUnknown with NULL value-
   /// pointer.

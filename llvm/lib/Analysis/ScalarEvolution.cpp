@@ -254,6 +254,62 @@ static cl::opt<bool> UseContextForNoWrapFlagInference(
     cl::desc("Infer nuw/nsw flags using context where suitable"),
     cl::init(true));
 
+static cl::opt<bool> VerifyHiddenDependencies(
+    "verify-scev-hidden-dependencies", cl::Hidden, cl::init(false));
+
+class ScalarEvolution::HiddenDependencyIndex {
+  using SCEVUsers = SmallVector<const SCEV *, 2>;
+
+  struct ValueUsersConfig : ValueMapConfig<Value *> {
+    enum { FollowRAUW = false };
+
+    struct ExtraData {
+      HiddenDependencyIndex *Index = nullptr;
+    };
+
+    static void onRAUW(const ExtraData &Data, Value *Old, Value *) {
+      Data.Index->forgetAndEraseValue(Old);
+    }
+
+    static void onDelete(const ExtraData &Data, Value *Old) {
+      Data.Index->forgetAndEraseValue(Old);
+    }
+  };
+
+  ScalarEvolution *SE;
+  ValueMap<Value *, SCEVUsers, ValueUsersConfig> ValueUsers;
+
+  void forgetAndEraseValue(Value *V) {
+    SmallVector<SCEVUse, 4> Roots;
+    appendValueUsers(V, Roots);
+    SE->forgetMemoizedResults(Roots);
+    ValueUsers.erase(V);
+  }
+
+public:
+  explicit HiddenDependencyIndex(ScalarEvolution &SE)
+      : SE(&SE), ValueUsers(ValueUsersConfig::ExtraData{this}) {}
+
+  void resetOwner(ScalarEvolution &NewSE) { SE = &NewSE; }
+
+  void addValueDependency(Value *Dependency, const SCEV *User) {
+    auto &Users = ValueUsers[Dependency];
+    if (!is_contained(Users, User))
+      Users.push_back(User);
+  }
+
+  void appendValueUsers(Value *V, SmallVectorImpl<SCEVUse> &Users) const {
+    auto It = ValueUsers.find(V);
+    if (It == ValueUsers.end())
+      return;
+    append_range(Users, It->second);
+  }
+
+  void clear() {
+    ValueUsers.clear();
+  }
+};
+
 //===----------------------------------------------------------------------===//
 //                           SCEV class definitions
 //===----------------------------------------------------------------------===//
@@ -4646,7 +4702,8 @@ void ScalarEvolution::eraseValueFromMap(Value *V) {
   }
 }
 
-void ScalarEvolution::insertValueToMap(Value *V, const SCEV *S) {
+void ScalarEvolution::insertValueToMap(Value *V, const SCEV *S,
+                                       ArrayRef<Value *> HiddenOps) {
   // A recursive query may have already computed the SCEV. It should be
   // equivalent, but may not necessarily be exactly the same, e.g. due to lazily
   // inferred nowrap flags.
@@ -4654,7 +4711,27 @@ void ScalarEvolution::insertValueToMap(Value *V, const SCEV *S) {
   if (It == ValueExprMap.end()) {
     ValueExprMap.insert({SCEVCallbackVH(V, this), S});
     ExprValueMap[S].insert(V);
+    registerHiddenDependencies(V, S, HiddenOps);
   }
+}
+
+void ScalarEvolution::registerHiddenDependencies(
+    Value *V, const SCEV *S, ArrayRef<Value *> HiddenOps) {
+  auto RegisterValue = [&](Value *Dependency) {
+    auto *DependencyI = dyn_cast<Instruction>(Dependency);
+    if (!DependencyI ||
+        (!isSCEVable(DependencyI->getType()) &&
+         !isa<WithOverflowInst>(DependencyI)))
+      return;
+
+    HiddenDependencies->addValueDependency(DependencyI, S);
+  };
+
+  for (Value *HiddenOp : HiddenOps)
+    RegisterValue(HiddenOp);
+  if (auto *PN = dyn_cast<PHINode>(V))
+    for (Value *Incoming : PN->incoming_values())
+      RegisterValue(Incoming);
 }
 
 /// Return an existing SCEV if it exists, otherwise analyze the expression and
@@ -6506,17 +6583,9 @@ APInt ScalarEvolution::getConstantMultiple(const SCEV *S,
     return I->second;
 
   APInt Result = getConstantMultipleImpl(S, CtxI);
-  // The cached multiple is IR-derived for a SCEVUnknown; track it so that
-  // forgetLoop() invalidates it.
-  registerUnknownWithIRDerivedProperty(S);
   auto InsertPair = ConstantMultipleCache.insert({S, Result});
   assert(InsertPair.second && "Should insert a new key");
   return InsertPair.first->second;
-}
-
-void ScalarEvolution::registerUnknownWithIRDerivedProperty(const SCEV *S) {
-  if (isa<SCEVUnknown>(S))
-    UnknownsWithIRDerivedProperties.insert(S);
 }
 
 APInt ScalarEvolution::getNonZeroConstantMultiple(const SCEV *S) {
@@ -7654,6 +7723,7 @@ const SCEV *ScalarEvolution::createSCEVIter(Value *V) {
   // been visited already.
   using PointerTy = PointerIntPair<Value *, 1, bool>;
   SmallVector<PointerTy> Stack;
+  DenseMap<Value *, SmallVector<Value *, 4>> PendingHiddenOps;
 
   Stack.emplace_back(V, false);
   while (!Stack.empty()) {
@@ -7666,6 +7736,7 @@ const SCEV *ScalarEvolution::createSCEVIter(Value *V) {
     }
 
     SmallVector<Value *> Ops;
+    SmallVector<Value *> HiddenOps;
     const SCEV *CreatedSCEV = nullptr;
     // If all operands have been visited already, create the SCEV.
     if (E.getInt()) {
@@ -7674,11 +7745,14 @@ const SCEV *ScalarEvolution::createSCEVIter(Value *V) {
       // Otherwise get the operands we need to create SCEV's for before creating
       // the SCEV for CurV. If the SCEV for CurV can be constructed trivially,
       // just use it.
-      CreatedSCEV = getOperandsToCreate(CurV, Ops);
+      CreatedSCEV = getOperandsToCreate(CurV, Ops, HiddenOps);
+      append_range(PendingHiddenOps[CurV], Ops);
+      append_range(PendingHiddenOps[CurV], HiddenOps);
     }
 
     if (CreatedSCEV) {
-      insertValueToMap(CurV, CreatedSCEV);
+      insertValueToMap(CurV, CreatedSCEV, PendingHiddenOps.lookup(CurV));
+      PendingHiddenOps.erase(CurV);
       Stack.pop_back();
     } else {
       Stack.back().setInt(true);
@@ -7692,7 +7766,8 @@ const SCEV *ScalarEvolution::createSCEVIter(Value *V) {
 }
 
 const SCEV *
-ScalarEvolution::getOperandsToCreate(Value *V, SmallVectorImpl<Value *> &Ops) {
+ScalarEvolution::getOperandsToCreate(Value *V, SmallVectorImpl<Value *> &Ops,
+                                     SmallVectorImpl<Value *> &HiddenOps) {
   if (!isSCEVable(V->getType()))
     return getUnknown(V);
 
@@ -7739,6 +7814,7 @@ ScalarEvolution::getOperandsToCreate(Value *V, SmallVectorImpl<Value *> &Ops) {
           Ops.push_back(BO->LHS);
           break;
         }
+        HiddenOps.push_back(BO->LHS);
         // CreateSCEV calls getNoWrapFlagsFromUB, which under certain conditions
         // requires a SCEV for the LHS.
         if (BO->Op && (BO->IsNSW || BO->IsNUW)) {
@@ -8723,41 +8799,15 @@ void ScalarEvolution::forgetAllLoops() {
   ExprValueMap.clear();
   HasRecMap.clear();
   ConstantMultipleCache.clear();
-  UnknownsWithIRDerivedProperties.clear();
+  HiddenDependencies->clear();
   PredicatedSCEVRewrites.clear();
   FoldCache.clear();
   FoldCacheUser.clear();
 }
-void ScalarEvolution::visitAndClearUsers(
-    SmallVectorImpl<Instruction *> &Worklist,
-    SmallPtrSetImpl<Instruction *> &Visited,
-    SmallVectorImpl<SCEVUse> &ToForget) {
-  while (!Worklist.empty()) {
-    Instruction *I = Worklist.pop_back_val();
-    if (!isSCEVable(I->getType()) && !isa<WithOverflowInst>(I))
-      continue;
-
-    ValueExprMapType::iterator It =
-        ValueExprMap.find_as(static_cast<Value *>(I));
-    if (It != ValueExprMap.end()) {
-      ToForget.push_back(It->second);
-      eraseValueFromMap(It->first);
-      if (PHINode *PN = dyn_cast<PHINode>(I))
-        ConstantEvolutionLoopExitValue.erase(PN);
-    }
-
-    PushDefUseChildren(I, Worklist, Visited);
-  }
-}
-
 void ScalarEvolution::forgetLoop(const Loop *L) {
   SmallVector<const Loop *, 16> LoopWorklist(1, L);
-  // A SCEVUnknown's range/constant-multiple/value-at-scope cache can depend on
-  // this loop's trip count through the underlying IR, but that dependency is
-  // not visible in the SCEV operand graph. Conservatively seed every such
-  // SCEVUnknown as an invalidation root so the stale caches are dropped.
-  SmallVector<SCEVUse, 16> ToForget(UnknownsWithIRDerivedProperties.begin(),
-                                    UnknownsWithIRDerivedProperties.end());
+  SmallVector<Instruction *, 16> HeaderPhis;
+  SmallVector<SCEVUse, 16> ToForget;
 
   // Iterate over all the loops and sub-loops to drop SCEV information.
   while (!LoopWorklist.empty()) {
@@ -8777,10 +8827,11 @@ void ScalarEvolution::forgetLoop(const Loop *L) {
 
     // Drop information about expressions based on loop-header PHIs.
     for (PHINode &PN : CurrL->getHeader()->phis()) {
+      HeaderPhis.push_back(&PN);
+      if (const SCEV *S = getExistingSCEV(&PN))
+        ToForget.push_back(S);
+      HiddenDependencies->appendValueUsers(&PN, ToForget);
       ConstantEvolutionLoopExitValue.erase(&PN);
-      auto VIt = ValueExprMap.find_as(static_cast<Value *>(&PN));
-      if (VIt != ValueExprMap.end())
-        ToForget.push_back(VIt->second);
     }
 
     LoopPropertiesCache.erase(CurrL);
@@ -8788,7 +8839,9 @@ void ScalarEvolution::forgetLoop(const Loop *L) {
     // ValuesAtScopes map.
     LoopWorklist.append(CurrL->begin(), CurrL->end());
   }
+  verifyLoopHiddenDependencies(HeaderPhis, ToForget);
   forgetMemoizedResults(ToForget);
+  forgetIRDerivedProperties();
 }
 
 void ScalarEvolution::forgetTopmostLoop(const Loop *L) {
@@ -8799,15 +8852,88 @@ void ScalarEvolution::forgetValue(Value *V) {
   Instruction *I = dyn_cast<Instruction>(V);
   if (!I) return;
 
-  // Drop information about expressions based on loop-header PHIs.
-  SmallVector<Instruction *, 16> Worklist;
-  SmallPtrSet<Instruction *, 8> Visited;
   SmallVector<SCEVUse, 8> ToForget;
-  Worklist.push_back(I);
-  Visited.insert(I);
-  visitAndClearUsers(Worklist, Visited, ToForget);
+  if (const SCEV *S = getExistingSCEV(I))
+    ToForget.push_back(S);
+  HiddenDependencies->appendValueUsers(I, ToForget);
 
+  verifyHiddenDependencies(I, ToForget);
   forgetMemoizedResults(ToForget);
+  forgetIRDerivedProperties();
+}
+
+void ScalarEvolution::verifyHiddenDependencies(
+    Value *V, ArrayRef<SCEVUse> Roots) const {
+  if (!VerifyHiddenDependencies)
+    return;
+
+  SmallPtrSet<const SCEV *, 8> Actual(llvm::from_range, Roots);
+  SmallVector<const SCEV *, 8> SCEVWorklist(Actual.begin(), Actual.end());
+  while (!SCEVWorklist.empty()) {
+    const SCEV *Curr = SCEVWorklist.pop_back_val();
+    if (auto It = SCEVUsers.find(Curr); It != SCEVUsers.end())
+      for (const SCEV *User : It->second)
+        if (Actual.insert(User).second)
+          SCEVWorklist.push_back(User);
+  }
+
+  auto *I = dyn_cast<Instruction>(V);
+  if (!I)
+    return;
+  SmallVector<Instruction *, 16> Worklist(1, I);
+  SmallPtrSet<Instruction *, 8> Visited;
+  Visited.insert(I);
+  while (!Worklist.empty()) {
+    Instruction *Cur = Worklist.pop_back_val();
+    if (!isSCEVable(Cur->getType()) && !isa<WithOverflowInst>(Cur))
+      continue;
+    if (isSCEVable(Cur->getType()))
+      if (const SCEV *S = ValueExprMap.lookup(Cur))
+        if (!Actual.contains(S)) {
+          bool IsPlainUnknown = isa<SCEVUnknown>(S);
+          if (!IsPlainUnknown) {
+            errs() << "Hidden dependency root: " << *V << "\n"
+                   << "Missed cached value: " << *Cur << "\n"
+                   << "Missed SCEV: " << *S << "\n";
+            report_fatal_error(
+                "Hidden dependencies miss a reachable cached expression");
+          }
+        }
+    PushDefUseChildren(Cur, Worklist, Visited);
+  }
+}
+
+void ScalarEvolution::verifyLoopHiddenDependencies(
+    ArrayRef<Instruction *> HeaderPhis, ArrayRef<SCEVUse> Roots) const {
+  if (!VerifyHiddenDependencies)
+    return;
+
+  SmallPtrSet<const SCEV *, 8> Actual(llvm::from_range, Roots);
+  SmallVector<const SCEV *, 8> SCEVWorklist(Actual.begin(), Actual.end());
+  while (!SCEVWorklist.empty()) {
+    const SCEV *Curr = SCEVWorklist.pop_back_val();
+    if (auto It = SCEVUsers.find(Curr); It != SCEVUsers.end())
+      for (const SCEV *User : It->second)
+        if (Actual.insert(User).second)
+          SCEVWorklist.push_back(User);
+  }
+
+  SmallVector<Instruction *, 32> Worklist(HeaderPhis);
+  SmallPtrSet<Instruction *, 16> Visited(HeaderPhis.begin(), HeaderPhis.end());
+  while (!Worklist.empty()) {
+    Instruction *Cur = Worklist.pop_back_val();
+    if (!isSCEVable(Cur->getType()) && !isa<WithOverflowInst>(Cur))
+      continue;
+    if (isSCEVable(Cur->getType()))
+      if (const SCEV *S = ValueExprMap.lookup(Cur))
+        if (!Actual.contains(S)) {
+          bool IsPlainUnknown = isa<SCEVUnknown>(S);
+          if (!IsPlainUnknown)
+            report_fatal_error(
+                "Loop hidden dependencies miss a reachable cached expression");
+        }
+    PushDefUseChildren(Cur, Worklist, Visited);
+  }
 }
 
 void ScalarEvolution::forgetLcssaPhiWithNewPredecessor(Loop *L, PHINode *V) {
@@ -10132,9 +10258,6 @@ const SCEV *ScalarEvolution::computeExitCountExhaustively(const Loop *L,
 }
 
 const SCEV *ScalarEvolution::getSCEVAtScope(const SCEV *V, const Loop *L) {
-  // The value-at-scope cache below folds V using loop trip counts, so a
-  // SCEVUnknown entry is IR-derived; track it for forgetLoop().
-  registerUnknownWithIRDerivedProperty(V);
   SmallVector<std::pair<const Loop *, const SCEV *>, 2> &Values =
       ValuesAtScopes[V];
   // Check to see if we've folded this expression at this loop before.
@@ -14096,8 +14219,9 @@ ScalarEvolution::ScalarEvolution(Function &F, TargetLibraryInfo &TLI,
                                  AssumptionCache &AC, DominatorTree &DT,
                                  LoopInfo &LI)
     : F(F), DL(F.getDataLayout()), TLI(TLI), AC(AC), DT(DT), LI(LI),
-      CouldNotCompute(new SCEVCouldNotCompute()), ValuesAtScopes(64),
-      LoopDispositions(64), BlockDispositions(64) {
+      CouldNotCompute(new SCEVCouldNotCompute()),
+      HiddenDependencies(std::make_unique<HiddenDependencyIndex>(*this)),
+      ValuesAtScopes(64), LoopDispositions(64), BlockDispositions(64) {
   // To use guards for proving predicates, we need to scan every instruction in
   // relevant basic blocks, and not just terminators.  Doing this is a waste of
   // time if the IR does not actually contain any calls to
@@ -14117,11 +14241,10 @@ ScalarEvolution::ScalarEvolution(ScalarEvolution &&Arg)
     : F(Arg.F), DL(Arg.DL), HasGuards(Arg.HasGuards), TLI(Arg.TLI), AC(Arg.AC),
       DT(Arg.DT), LI(Arg.LI), CouldNotCompute(std::move(Arg.CouldNotCompute)),
       ValueExprMap(std::move(Arg.ValueExprMap)),
+      HiddenDependencies(std::move(Arg.HiddenDependencies)),
       PendingLoopPredicates(std::move(Arg.PendingLoopPredicates)),
       PendingMerges(std::move(Arg.PendingMerges)),
       ConstantMultipleCache(std::move(Arg.ConstantMultipleCache)),
-      UnknownsWithIRDerivedProperties(
-          std::move(Arg.UnknownsWithIRDerivedProperties)),
       BackedgeTakenCounts(std::move(Arg.BackedgeTakenCounts)),
       PredicatedBackedgeTakenCounts(
           std::move(Arg.PredicatedBackedgeTakenCounts)),
@@ -14144,6 +14267,7 @@ ScalarEvolution::ScalarEvolution(ScalarEvolution &&Arg)
       PredicatedSCEVRewrites(std::move(Arg.PredicatedSCEVRewrites)),
       FirstUnknown(Arg.FirstUnknown) {
   Arg.FirstUnknown = nullptr;
+  HiddenDependencies->resetOwner(*this);
 }
 
 ScalarEvolution::~ScalarEvolution() {
@@ -14700,8 +14824,15 @@ void ScalarEvolution::forgetMemoizedResults(ArrayRef<SCEVUse> SCEVs) {
       [&](const auto &Entry) { return ToForget.count(Entry.first.first); });
 }
 
+void ScalarEvolution::forgetIRDerivedProperties() {
+  UnsignedRanges.clear();
+  SignedRanges.clear();
+  ConstantMultipleCache.clear();
+  ValuesAtScopes.clear();
+  ValuesAtScopesUsers.clear();
+}
+
 void ScalarEvolution::forgetMemoizedResultsImpl(const SCEV *S) {
-  UnknownsWithIRDerivedProperties.erase(S);
   LoopDispositions.erase(S);
   BlockDispositions.erase(S);
   UnsignedRanges.erase(S);
