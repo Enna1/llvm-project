@@ -128,7 +128,7 @@ struct SpillPlacement::Node {
 
   /// addLink - Add a link to bundle b with weight w.
   void addLink(unsigned b, BlockFrequency w) {
-    constexpr unsigned LinkIndexThreshold = 32;
+    constexpr unsigned LinkIndexThreshold = 64;
 
     // Update cached sum.
     SumLinkWeights += w;
