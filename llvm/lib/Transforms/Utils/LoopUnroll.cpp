@@ -1035,12 +1035,22 @@ llvm::UnrollLoop(Loop *L, UnrollLoopOptions ULO, LoopInfo *LI,
   // change. When we forget outermost loop, we also forget all contained loops
   // and this is what we need here.
   if (SE) {
+    SmallSetVector<PHINode *, 8> LCSSAPhisToForget;
+    for (BasicBlock *BB : L->blocks())
+      for (BasicBlock *Succ : successors(BB)) {
+        if (L->contains(Succ))
+          continue;
+        for (PHINode &PHI : Succ->phis())
+          LCSSAPhisToForget.insert(&PHI);
+      }
     if (ULO.ForgetAllSCEV)
       SE->forgetAllLoops();
     else {
       SE->forgetTopmostLoop(L);
       SE->forgetBlockAndLoopDispositions();
     }
+
+    SE->forgetLcssaPhisWithNewPredecessor(L, LCSSAPhisToForget.getArrayRef());
   }
 
   if (!LatchIsExiting)
@@ -1229,7 +1239,6 @@ llvm::UnrollLoop(Loop *L, UnrollLoopOptions ULO, LoopInfo *LI,
           if (It != LastValueMap.end())
             Incoming = It->second;
           PHI.addIncoming(Incoming, New);
-          SE->forgetLcssaPhiWithNewPredecessor(L, &PHI);
         }
       }
       // Keep track of new headers and latches as we create them, so that

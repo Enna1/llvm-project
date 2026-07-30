@@ -107,6 +107,16 @@ static void RewriteUsesOfClonedInstructions(BasicBlock *OrigHeader,
   // Now fix up users of the instructions in OrigHeader, inserting PHI nodes
   // as necessary.
   SSAUpdater SSA(InsertedPHIs);
+  if (SE) {
+    SmallSetVector<Value *, 16> UsersToForget;
+    for (I = OrigHeader->begin(); I != E; ++I)
+      for (User *U : I->users())
+        if (auto *UserI = dyn_cast<Instruction>(U))
+          if (UserI->getParent() != OrigHeader)
+            UsersToForget.insert(UserI);
+    SE->forgetValuesWithCachePruning(UsersToForget.getArrayRef());
+  }
+
   for (I = OrigHeader->begin(); I != E; ++I) {
     Value *OrigHeaderVal = &*I;
 
@@ -120,10 +130,6 @@ static void RewriteUsesOfClonedInstructions(BasicBlock *OrigHeader,
     // The value now exits in two versions: the initial value in the preheader
     // and the loop "next" value in the original header.
     SSA.Initialize(OrigHeaderVal->getType(), OrigHeaderVal->getName());
-    // Force re-computation of OrigHeaderVal, as some users now need to use the
-    // new PHI node.
-    if (SE)
-      SE->forgetValue(OrigHeaderVal);
     SSA.AddAvailableValue(OrigHeader, OrigHeaderVal);
     SSA.AddAvailableValue(OrigPreheader, OrigPreHeaderVal);
 

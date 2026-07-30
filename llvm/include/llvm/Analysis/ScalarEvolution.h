@@ -1156,9 +1156,17 @@ public:
   /// def-use chain linking it to a loop.
   LLVM_ABI void forgetValue(Value *V);
 
+  /// Batch invalidation that rebuilds a temporary dependency set from the
+  /// current ValueExprMap and uses it to prune the def-use traversal.
+  LLVM_ABI void forgetValuesWithCachePruning(ArrayRef<Value *> Values);
+
   /// Forget LCSSA phi node V of loop L to which a new predecessor was added,
   /// such that it may no longer be trivial.
   LLVM_ABI void forgetLcssaPhiWithNewPredecessor(Loop *L, PHINode *V);
+
+  /// Batch variant of forgetLcssaPhiWithNewPredecessor().
+  LLVM_ABI void forgetLcssaPhisWithNewPredecessor(Loop *L,
+                                                  ArrayRef<PHINode *> Phis);
 
   /// Called when the client has changed the disposition of values in
   /// this loop.
@@ -1704,6 +1712,10 @@ private:
 
   /// This is a cache of the values we have analyzed so far.
   ValueExprMapType ValueExprMap;
+
+  /// IR values on paths to ValueExprMap entries whose dependencies are not
+  /// represented by the SCEV operand graph.
+  SmallPtrSet<Value *, 32> ValueExprMapDependencyFrontier;
 
   /// This is a cache for expressions that got folded to a different existing
   /// SCEV.
@@ -2385,6 +2397,9 @@ private:
 
   /// Insert V to S mapping into ValueExprMap and ExprValueMap.
   void insertValueToMap(Value *V, const SCEV *S);
+
+  /// Mark the SCEVable IR operand closure of V as an invalidation frontier.
+  void markValueExprMapDependency(Value *V);
 
   /// Return false iff given SCEV contains a SCEVUnknown with NULL value-
   /// pointer.

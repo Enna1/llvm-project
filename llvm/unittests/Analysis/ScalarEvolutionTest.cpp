@@ -1709,6 +1709,81 @@ TEST_F(ScalarEvolutionsTest, ForgetValueWithOverflowInst) {
   });
 }
 
+TEST_F(ScalarEvolutionsTest, ForgetValueWithDependencyFrontier) {
+  LLVMContext C;
+  SMDiagnostic Err;
+  std::unique_ptr<Module> M = parseAssemblyString("define i32 @foo(i32 %x) { "
+                                                  "  %add1 = add i32 %x, 1 "
+                                                  "  %add2 = add i32 %add1, 1 "
+                                                  "  %add3 = add i32 %add2, 1 "
+                                                  "  ret i32 %add3 "
+                                                  "} ",
+                                                  Err, C);
+
+  ASSERT_TRUE(M && "Could not parse module?");
+  ASSERT_TRUE(!verifyModule(*M) && "Must have been well formed!");
+
+  runWithSE(*M, "foo", [](Function &F, LoopInfo &LI, ScalarEvolution &SE) {
+    auto *Add1 = getInstructionByName(F, "add1");
+    auto *Add2 = getInstructionByName(F, "add2");
+    auto *Add3 = getInstructionByName(F, "add3");
+
+    const SCEV *Add3Scev = SE.getSCEV(Add3);
+    EXPECT_NE(Add3Scev, nullptr);
+    EXPECT_EQ(SE.getExistingSCEV(Add1), nullptr);
+    EXPECT_EQ(SE.getExistingSCEV(Add2), nullptr);
+
+    SE.forgetValue(Add1);
+    EXPECT_EQ(SE.getExistingSCEV(Add3), nullptr);
+
+    Add3Scev = SE.getSCEV(Add3);
+    EXPECT_NE(Add3Scev, nullptr);
+    SE.forgetValuesWithCachePruning({Add1});
+    EXPECT_EQ(SE.getExistingSCEV(Add3), nullptr);
+  });
+}
+
+TEST_F(ScalarEvolutionsTest, ForgetLcssaPhiInvalidatesSimplifiedUser) {
+  LLVMContext C;
+  SMDiagnostic Err;
+  std::unique_ptr<Module> M =
+      parseAssemblyString("define i32 @foo(i32 %n, i1 %cond) { "
+                          "entry: "
+                          "  br label %loop "
+                          "loop: "
+                          "  %iv = phi i32 [ 0, %entry ], [ %iv.next, %loop ] "
+                          "  %iv.next = add i32 %iv, 1 "
+                          "  br i1 %cond, label %loop, label %exit "
+                          "exit: "
+                          "  %lcssa = phi i32 [ %n, %loop ] "
+                          "  %diff = sub i32 %lcssa, %n "
+                          "  ret i32 %diff "
+                          "new.pred: "
+                          "  ret i32 0 "
+                          "} ",
+                          Err, C);
+
+  ASSERT_TRUE(M && "Could not parse module?");
+  ASSERT_TRUE(!verifyModule(*M) && "Must have been well formed!");
+
+  runWithSE(*M, "foo", [](Function &F, LoopInfo &LI, ScalarEvolution &SE) {
+    auto *Lcssa = cast<PHINode>(getInstructionByName(F, "lcssa"));
+    auto *Diff = getInstructionByName(F, "diff");
+    BasicBlock *NewPred = Lcssa->getParent()->getNextNode();
+
+    const SCEV *DiffScev = SE.getSCEV(Diff);
+    EXPECT_TRUE(DiffScev->isZero());
+
+    NewPred->getTerminator()->eraseFromParent();
+    UncondBrInst::Create(Lcssa->getParent(), NewPred);
+    Lcssa->addIncoming(ConstantInt::get(Lcssa->getType(), 42), NewPred);
+
+    Loop *L = *LI.begin();
+    SE.forgetLcssaPhiWithNewPredecessor(L, Lcssa);
+    EXPECT_EQ(SE.getExistingSCEV(Diff), nullptr);
+  });
+}
+
 TEST_F(ScalarEvolutionsTest, ComplexityComparatorIsStrictWeakOrdering) {
   // Regression test for a case where caching of equivalent values caused the
   // comparator to get inconsistent.

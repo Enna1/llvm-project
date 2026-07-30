@@ -4651,9 +4651,42 @@ void ScalarEvolution::insertValueToMap(Value *V, const SCEV *S) {
   // equivalent, but may not necessarily be exactly the same, e.g. due to lazily
   // inferred nowrap flags.
   auto It = ValueExprMap.find_as(V);
-  if (It == ValueExprMap.end()) {
-    ValueExprMap.insert({SCEVCallbackVH(V, this), S});
-    ExprValueMap[S].insert(V);
+  if (It != ValueExprMap.end())
+    return;
+
+  ValueExprMap.insert({SCEVCallbackVH(V, this), S});
+  ExprValueMap[S].insert(V);
+
+  auto *I = dyn_cast<Instruction>(V);
+  if (!I)
+    return;
+
+  if (isa<SCEVUnknown>(S))
+    if (auto *PN = dyn_cast<PHINode>(I)) {
+      for (Value *Incoming : PN->incoming_values())
+        markValueExprMapDependency(Incoming);
+      return;
+    }
+
+  if (isa<SCEVConstant>(S))
+    for (Value *Op : I->operands())
+      markValueExprMapDependency(Op);
+}
+
+void ScalarEvolution::markValueExprMapDependency(Value *V) {
+  SmallVector<Instruction *, 8> Worklist;
+  if (auto *I = dyn_cast<Instruction>(V))
+    if (isSCEVable(I->getType()) &&
+        ValueExprMapDependencyFrontier.insert(I).second)
+      Worklist.push_back(I);
+
+  while (!Worklist.empty()) {
+    Instruction *I = Worklist.pop_back_val();
+    for (Value *Op : I->operands())
+      if (auto *OpI = dyn_cast<Instruction>(Op))
+        if (isSCEVable(OpI->getType()) &&
+            ValueExprMapDependencyFrontier.insert(OpI).second)
+          Worklist.push_back(OpI);
   }
 }
 
@@ -4949,18 +4982,6 @@ const SCEV *ScalarEvolution::getPointerBase(const SCEV *V) {
       V = PtrOp;
     } else // Not something we can look further into.
       return V;
-  }
-}
-
-/// Push users of the given Instruction onto the given Worklist.
-static void PushDefUseChildren(Instruction *I,
-                               SmallVectorImpl<Instruction *> &Worklist,
-                               SmallPtrSetImpl<Instruction *> &Visited) {
-  // Push the def-use children onto the Worklist stack.
-  for (User *U : I->users()) {
-    auto *UserInsn = cast<Instruction>(U);
-    if (Visited.insert(UserInsn).second)
-      Worklist.push_back(UserInsn);
   }
 }
 
@@ -7731,6 +7752,7 @@ ScalarEvolution::getOperandsToCreate(Value *V, SmallVectorImpl<Value *> &Ops) {
           Ops.push_back(BO->LHS);
           break;
         }
+        markValueExprMapDependency(BO->LHS);
         // CreateSCEV calls getNoWrapFlagsFromUB, which under certain conditions
         // requires a SCEV for the LHS.
         if (BO->Op && (BO->IsNSW || BO->IsNUW)) {
@@ -8718,6 +8740,7 @@ void ScalarEvolution::forgetAllLoops() {
   LoopPropertiesCache.clear();
   ConstantEvolutionLoopExitValue.clear();
   ValueExprMap.clear();
+  ValueExprMapDependencyFrontier.clear();
   ValuesAtScopes.clear();
   ValuesAtScopesUsers.clear();
   LoopDispositions.clear();
@@ -8735,6 +8758,7 @@ void ScalarEvolution::visitAndClearUsers(
     SmallVectorImpl<Instruction *> &Worklist,
     SmallPtrSetImpl<Instruction *> &Visited,
     SmallVectorImpl<SCEVUse> &ToForget) {
+  SmallPtrSet<Instruction *, 8> Roots(llvm::from_range, Worklist);
   while (!Worklist.empty()) {
     Instruction *I = Worklist.pop_back_val();
     if (!isSCEVable(I->getType()) && !isa<WithOverflowInst>(I))
@@ -8742,6 +8766,8 @@ void ScalarEvolution::visitAndClearUsers(
 
     ValueExprMapType::iterator It =
         ValueExprMap.find_as(static_cast<Value *>(I));
+    bool WasDependency = ValueExprMapDependencyFrontier.contains(I);
+    const SCEV *CurrentSCEV = It == ValueExprMap.end() ? nullptr : It->second;
     if (It != ValueExprMap.end()) {
       ToForget.push_back(It->second);
       eraseValueFromMap(It->first);
@@ -8749,7 +8775,36 @@ void ScalarEvolution::visitAndClearUsers(
         ConstantEvolutionLoopExitValue.erase(PN);
     }
 
-    PushDefUseChildren(I, Worklist, Visited);
+    for (User *U : I->users()) {
+      auto *UserI = cast<Instruction>(U);
+      if (!isSCEVable(UserI->getType()) && !isa<WithOverflowInst>(UserI))
+        continue;
+      auto UserIt = ValueExprMap.find_as(static_cast<Value *>(UserI));
+      if (UserIt == ValueExprMap.end() && !Roots.contains(I) &&
+          !WasDependency && !isa<WithOverflowInst>(UserI))
+        continue;
+      if (ValueExprMapDependencyFrontier.contains(UserI)) {
+        if (Visited.insert(UserI).second)
+          Worklist.push_back(UserI);
+        continue;
+      }
+      if (isa<PHINode>(UserI)) {
+        if (Visited.insert(UserI).second)
+          Worklist.push_back(UserI);
+        continue;
+      }
+      if (CurrentSCEV && UserIt != ValueExprMap.end()) {
+        const SCEV *UserSCEV = UserIt->second;
+        if (UserSCEV == CurrentSCEV)
+          continue;
+        auto SCEVUsersIt = SCEVUsers.find(CurrentSCEV);
+        if (SCEVUsersIt != SCEVUsers.end() &&
+            SCEVUsersIt->second.contains(UserSCEV))
+          continue;
+      }
+      if (Visited.insert(UserI).second)
+        Worklist.push_back(UserI);
+    }
   }
 }
 
@@ -8793,7 +8848,8 @@ void ScalarEvolution::forgetTopmostLoop(const Loop *L) {
 
 void ScalarEvolution::forgetValue(Value *V) {
   Instruction *I = dyn_cast<Instruction>(V);
-  if (!I) return;
+  if (!I)
+    return;
 
   // Drop information about expressions based on loop-header PHIs.
   SmallVector<Instruction *, 16> Worklist;
@@ -8806,42 +8862,70 @@ void ScalarEvolution::forgetValue(Value *V) {
   forgetMemoizedResults(ToForget);
 }
 
-void ScalarEvolution::forgetLcssaPhiWithNewPredecessor(Loop *L, PHINode *V) {
-  if (!isSCEVable(V->getType()))
+void ScalarEvolution::forgetValuesWithCachePruning(ArrayRef<Value *> Values) {
+  SmallVector<Instruction *, 16> Worklist;
+  SmallPtrSet<Instruction *, 8> Visited;
+  SmallVector<SCEVUse, 8> ToForget;
+  for (Value *V : Values)
+    if (auto *I = dyn_cast<Instruction>(V))
+      if (Visited.insert(I).second)
+        Worklist.push_back(I);
+  if (Worklist.empty())
     return;
+  visitAndClearUsers(Worklist, Visited, ToForget);
+  forgetMemoizedResults(ToForget);
+}
 
-  // If SCEV looked through a trivial LCSSA phi node, we might have SCEV's
-  // directly using a SCEVUnknown/SCEVAddRec defined in the loop. After an
-  // extra predecessor is added, this is no longer valid. Find all Unknowns and
-  // AddRecs defined in the loop and invalidate any SCEV's making use of them.
-  if (const SCEV *S = getExistingSCEV(V)) {
-    struct InvalidationRootCollector {
-      Loop *L;
-      SmallVector<SCEVUse, 8> Roots;
+void ScalarEvolution::forgetLcssaPhiWithNewPredecessor(Loop *L, PHINode *V) {
+  forgetLcssaPhisWithNewPredecessor(L, {V});
+}
 
-      InvalidationRootCollector(Loop *L) : L(L) {}
+void ScalarEvolution::forgetLcssaPhisWithNewPredecessor(
+    Loop *L, ArrayRef<PHINode *> Phis) {
+  SmallVector<Instruction *, 16> Worklist;
+  SmallPtrSet<Instruction *, 8> Visited;
+  SmallVector<SCEVUse, 8> ToForget;
 
-      bool follow(const SCEV *S) {
-        if (auto *SU = dyn_cast<SCEVUnknown>(S)) {
-          if (auto *I = dyn_cast<Instruction>(SU->getValue()))
-            if (L->contains(I))
+  for (PHINode *V : Phis) {
+    if (!isSCEVable(V->getType()))
+      continue;
+    if (Visited.insert(V).second)
+      Worklist.push_back(V);
+
+    // If SCEV looked through a trivial LCSSA phi node, we might have SCEV's
+    // directly using a SCEVUnknown/SCEVAddRec defined in the loop. After an
+    // extra predecessor is added, this is no longer valid. Find all Unknowns
+    // and AddRecs defined in the loop and invalidate any SCEV's making use of
+    // them.
+    if (const SCEV *S = getExistingSCEV(V)) {
+      struct InvalidationRootCollector {
+        Loop *L;
+        SmallVectorImpl<SCEVUse> &Roots;
+
+        InvalidationRootCollector(Loop *L, SmallVectorImpl<SCEVUse> &Roots)
+            : L(L), Roots(Roots) {}
+
+        bool follow(const SCEV *S) {
+          if (auto *SU = dyn_cast<SCEVUnknown>(S)) {
+            if (auto *I = dyn_cast<Instruction>(SU->getValue()))
+              if (L->contains(I))
+                Roots.push_back(S);
+          } else if (auto *AddRec = dyn_cast<SCEVAddRecExpr>(S)) {
+            if (L->contains(AddRec->getLoop()))
               Roots.push_back(S);
-        } else if (auto *AddRec = dyn_cast<SCEVAddRecExpr>(S)) {
-          if (L->contains(AddRec->getLoop()))
-            Roots.push_back(S);
+          }
+          return true;
         }
-        return true;
-      }
-      bool isDone() const { return false; }
-    };
+        bool isDone() const { return false; }
+      };
 
-    InvalidationRootCollector C(L);
-    visitAll(S, C);
-    forgetMemoizedResults(C.Roots);
+      InvalidationRootCollector C(L, ToForget);
+      visitAll(S, C);
+    }
   }
 
-  // Also perform the normal invalidation.
-  forgetValue(V);
+  visitAndClearUsers(Worklist, Visited, ToForget);
+  forgetMemoizedResults(ToForget);
 }
 
 void ScalarEvolution::forgetLoopDispositions() { LoopDispositions.clear(); }
@@ -14134,6 +14218,8 @@ ScalarEvolution::ScalarEvolution(ScalarEvolution &&Arg)
       LoopUsers(std::move(Arg.LoopUsers)),
       PredicatedSCEVRewrites(std::move(Arg.PredicatedSCEVRewrites)),
       FirstUnknown(Arg.FirstUnknown) {
+  ValueExprMapDependencyFrontier =
+      std::move(Arg.ValueExprMapDependencyFrontier);
   Arg.FirstUnknown = nullptr;
 }
 
@@ -14149,6 +14235,7 @@ ScalarEvolution::~ScalarEvolution() {
 
   ExprValueMap.clear();
   ValueExprMap.clear();
+  ValueExprMapDependencyFrontier.clear();
   HasRecMap.clear();
   BackedgeTakenCounts.clear();
   PredicatedBackedgeTakenCounts.clear();
