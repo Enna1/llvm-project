@@ -92,8 +92,9 @@ struct SpillPlacement::Node {
   /// Optional index from bundle number to Links index.
   ///
   /// Links remains the canonical storage so iteration order stays unchanged.
-  /// The index is created only for high-degree nodes where repeated linear
-  /// scans in addLink() become expensive.
+  /// The index is enabled only for high-degree queries where repeated linear
+  /// scans in addLink() become expensive. Once allocated, its storage may be
+  /// reused by later queries.
   std::unique_ptr<DenseMap<unsigned, unsigned>> LinkIndex;
 
   /// SumLinkWeights - Cached sum of the weights of all links + ThresHold.
@@ -132,7 +133,15 @@ struct SpillPlacement::Node {
     // Update cached sum.
     SumLinkWeights += w;
 
-    if (LinkIndex) {
+    if (Links.size() >= LinkIndexThreshold) {
+      if (!LinkIndex)
+        LinkIndex = std::make_unique<DenseMap<unsigned, unsigned>>();
+      if (LinkIndex->empty()) {
+        LinkIndex->reserve(Links.size() + 1);
+        for (unsigned I = 0, E = Links.size(); I != E; ++I)
+          LinkIndex->insert(std::make_pair(Links[I].second, I));
+      }
+
       auto It = LinkIndex->find(b);
       if (It != LinkIndex->end()) {
         Links[It->second].first += w;
@@ -151,13 +160,6 @@ struct SpillPlacement::Node {
       }
     // This must be the first link to b.
     Links.push_back(std::make_pair(w, b));
-
-    if (Links.size() == LinkIndexThreshold) {
-      LinkIndex = std::make_unique<DenseMap<unsigned, unsigned>>();
-      LinkIndex->reserve(Links.size());
-      for (unsigned I = 0, E = Links.size(); I != E; ++I)
-        LinkIndex->insert(std::make_pair(Links[I].second, I));
-    }
   }
 
   /// addBias - Bias this node.
