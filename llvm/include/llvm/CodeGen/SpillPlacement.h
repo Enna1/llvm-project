@@ -47,12 +47,16 @@ class SpillPlacement {
   friend class SpillPlacementAnalysis;
 
   struct Node;
+  struct LinkIndexMap;
 
   const MachineFunction *MF = nullptr;
   const EdgeBundles *bundles = nullptr;
   const MachineBlockFrequencyInfo *MBFI = nullptr;
 
   std::unique_ptr<Node[]> nodes;
+
+  // Optional per-query side table for high-degree node link lookups.
+  std::unique_ptr<LinkIndexMap> LinkIndexes;
 
   // Nodes that are active in the current computation. Owned by the prepare()
   // caller.

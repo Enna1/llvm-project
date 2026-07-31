@@ -28,6 +28,7 @@
 
 #include "llvm/CodeGen/SpillPlacement.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/CodeGen/EdgeBundles.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineBlockFrequencyInfo.h"
@@ -38,11 +39,14 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <memory>
 #include <utility>
 
 using namespace llvm;
 
 #define DEBUG_TYPE "spill-code-placement"
+
+static constexpr unsigned LinkIndexThreshold = 32;
 
 char SpillPlacementWrapperLegacy::ID = 0;
 
@@ -129,6 +133,21 @@ struct SpillPlacement::Node {
     Links.push_back(std::make_pair(w, b));
   }
 
+  /// addLink - Add a link using a prebuilt bundle-to-link index.
+  void addLink(unsigned b, BlockFrequency w,
+               DenseMap<unsigned, unsigned> &LinkIndex) {
+    // Update cached sum.
+    SumLinkWeights += w;
+
+    auto Insert = LinkIndex.insert(std::make_pair(b, Links.size()));
+    if (!Insert.second) {
+      Links[Insert.first->second].first += w;
+      return;
+    }
+
+    Links.push_back(std::make_pair(w, b));
+  }
+
   /// addBias - Bias this node.
   void addBias(BlockFrequency freq, BorderConstraint direction) {
     switch (direction) {
@@ -189,6 +208,35 @@ struct SpillPlacement::Node {
   }
 };
 
+/// LinkIndexMap - Query-local side table for high-degree nodes.
+///
+/// Keep the index out of Node so the common low-degree case preserves the
+/// original node layout and SmallVector-only lookup path.
+struct SpillPlacement::LinkIndexMap {
+  DenseMap<unsigned, DenseMap<unsigned, unsigned>> Indexes;
+  SmallVector<unsigned, 8> IndexedNodes;
+
+  void clear() {
+    for (unsigned NodeNo : IndexedNodes) {
+      auto It = Indexes.find(NodeNo);
+      assert(It != Indexes.end());
+      It->second.clear();
+    }
+    IndexedNodes.clear();
+  }
+
+  DenseMap<unsigned, unsigned> &get(unsigned NodeNo, const Node &N) {
+    DenseMap<unsigned, unsigned> &Index = Indexes[NodeNo];
+    if (Index.empty()) {
+      IndexedNodes.push_back(NodeNo);
+      Index.reserve(N.Links.size() + 1);
+      for (unsigned I = 0, E = N.Links.size(); I != E; ++I)
+        Index.insert(std::make_pair(N.Links[I].second, I));
+    }
+    return Index;
+  }
+};
+
 bool SpillPlacementWrapperLegacy::runOnMachineFunction(MachineFunction &MF) {
   auto *Bundles = &getAnalysis<EdgeBundlesWrapperLegacy>().getEdgeBundles();
   auto *MBFI = &getAnalysis<MachineBlockFrequencyInfoWrapperPass>().getMBFI();
@@ -226,6 +274,7 @@ SpillPlacement::SpillPlacement(SpillPlacement &&) = default;
 
 void SpillPlacement::releaseMemory() {
   nodes.reset();
+  LinkIndexes.reset();
   TodoList.clear();
 }
 
@@ -325,6 +374,17 @@ void SpillPlacement::addPrefSpill(ArrayRef<unsigned> Blocks, bool Strong) {
 }
 
 void SpillPlacement::addLinks(ArrayRef<unsigned> Links) {
+  auto AddLink = [this](unsigned From, unsigned To, BlockFrequency Freq) {
+    if (nodes[From].Links.size() < LinkIndexThreshold) {
+      nodes[From].addLink(To, Freq);
+      return;
+    }
+
+    if (!LinkIndexes)
+      LinkIndexes = std::make_unique<LinkIndexMap>();
+    nodes[From].addLink(To, Freq, LinkIndexes->get(From, nodes[From]));
+  };
+
   for (unsigned Number : Links) {
     unsigned ib = bundles->getBundle(Number, false);
     unsigned ob = bundles->getBundle(Number, true);
@@ -335,8 +395,8 @@ void SpillPlacement::addLinks(ArrayRef<unsigned> Links) {
     activate(ib);
     activate(ob);
     BlockFrequency Freq = BlockFrequencies[Number];
-    nodes[ib].addLink(ob, Freq);
-    nodes[ob].addLink(ib, Freq);
+    AddLink(ib, ob, Freq);
+    AddLink(ob, ib, Freq);
   }
 }
 
@@ -385,6 +445,8 @@ void SpillPlacement::iterate() {
 void SpillPlacement::prepare(BitVector &RegBundles) {
   RecentPositive.clear();
   TodoList.clear();
+  if (LinkIndexes)
+    LinkIndexes->clear();
   // Reuse RegBundles as our ActiveNodes vector.
   ActiveNodes = &RegBundles;
   ActiveNodes->clear();
