@@ -81,6 +81,10 @@ struct SpillPlacement::Node {
   /// variable should go in a register through this bundle.
   int Value;
 
+  /// MaxLinkBundle - Largest bundle number seen in Links, or 0 if Links is
+  /// empty.
+  unsigned MaxLinkBundle;
+
   using LinkVector = SmallVector<std::pair<BlockFrequency, unsigned>, 4>;
 
   /// Links - (Weight, BundleNo) for all transparent blocks connecting to other
@@ -110,6 +114,7 @@ struct SpillPlacement::Node {
     BiasN = BlockFrequency(0);
     BiasP = BlockFrequency(0);
     Value = 0;
+    MaxLinkBundle = 0;
     SumLinkWeights = Threshold;
     Links.clear();
   }
@@ -118,6 +123,13 @@ struct SpillPlacement::Node {
   void addLink(unsigned b, BlockFrequency w) {
     // Update cached sum.
     SumLinkWeights += w;
+
+    // Bundle numbers above the current maximum cannot be duplicates.
+    if (b > MaxLinkBundle) {
+      MaxLinkBundle = b;
+      Links.push_back(std::make_pair(w, b));
+      return;
+    }
 
     // There can be multiple links to the same bundle, add them up.
     for (std::pair<BlockFrequency, unsigned> &L : Links)
