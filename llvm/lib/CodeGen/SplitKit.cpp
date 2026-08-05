@@ -161,6 +161,40 @@ void SplitAnalysis::clear() {
   UseBlocks.clear();
   ThroughBlocks.clear();
   CurLI = nullptr;
+
+  // Logically invalidate the block-start cache without clearing an array
+  // proportional to the number of blocks for every analyzed interval.
+  if (++BlockStartInsertCacheEpoch == 0) {
+    llvm::fill(BlockStartInsertCacheEpochs, 0);
+    ++BlockStartInsertCacheEpoch;
+  }
+}
+
+bool SplitAnalysis::canInsertAtMBBStart(unsigned Num) {
+  assert(CurLI && "No live interval has been analyzed");
+  assert(Num < MF.getNumBlockIDs() && "Invalid block number");
+
+  if (BlockStartInsertCacheEpochs.size() < MF.getNumBlockIDs()) {
+    BlockStartInsertCacheEpochs.resize(MF.getNumBlockIDs());
+    BlockStartInsertAllowed.resize(MF.getNumBlockIDs());
+  }
+
+  if (BlockStartInsertCacheEpochs[Num] == BlockStartInsertCacheEpoch)
+    return BlockStartInsertAllowed.test(Num);
+
+  MachineBasicBlock *MBB = MF.getBlockNumbered(Num);
+  auto FirstNonDebugInstr = MBB->getFirstNonDebugInstr();
+  bool CanInsert =
+      FirstNonDebugInstr == MBB->end() ||
+      !SlotIndex::isEarlierInstr(LIS.getInstructionIndex(*FirstNonDebugInstr),
+                                 getFirstSplitPoint(Num));
+
+  BlockStartInsertCacheEpochs[Num] = BlockStartInsertCacheEpoch;
+  if (CanInsert)
+    BlockStartInsertAllowed.set(Num);
+  else
+    BlockStartInsertAllowed.reset(Num);
+  return CanInsert;
 }
 
 /// analyzeUses - Count instructions, basic blocks, and loops using CurLI.

@@ -836,12 +836,8 @@ bool RAGreedy::addThroughConstraints(InterferenceCache::Cursor Intf,
     assert(B < GroupSize && "Array overflow");
     BCS[B].Number = Number;
 
-    // Abort if the spill cannot be inserted at the MBB' start
-    MachineBasicBlock *MBB = MF->getBlockNumbered(Number);
-    auto FirstNonDebugInstr = MBB->getFirstNonDebugInstr();
-    if (FirstNonDebugInstr != MBB->end() &&
-        SlotIndex::isEarlierInstr(LIS->getInstructionIndex(*FirstNonDebugInstr),
-                                  SA->getFirstSplitPoint(Number)))
+    // Abort if the spill cannot be inserted at the MBB' start.
+    if (!SA->canInsertAtMBBStart(Number))
       return false;
     // Interference for the live-in value.
     if (Intf.first() <= Indexes->getMBBStartIdx(Number))
