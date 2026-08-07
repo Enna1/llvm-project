@@ -29,7 +29,6 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/CodeGen/MachineInstr.h"
@@ -791,10 +790,10 @@ bool LiveVariables::VarInfo::isLiveIn(const MachineBasicBlock &MBB,
 bool LiveVariables::isLiveOut(Register Reg, const MachineBasicBlock &MBB) {
   LiveVariables::VarInfo &VI = getVarInfo(Reg);
 
-  SparseBitVector<> KillsBBs;
-
+  SmallPtrSet<const MachineBasicBlock *, 8> Kills;
+  Kills.reserve(VI.Kills.size());
   for (MachineInstr *MI : VI.Kills)
-    KillsBBs.set(MI->getParent()->getNumber());
+    Kills.insert(MI->getParent());
 
   // Loop over all of the successors of the basic block, checking to see if
   // the value is either live in the block, or if it is killed in the block.
@@ -804,7 +803,7 @@ bool LiveVariables::isLiveOut(Register Reg, const MachineBasicBlock &MBB) {
     if (VI.AliveBlocks.test(SuccIdx))
       return true;
     // Or is it live because there is a use in a successor that kills it?
-    if (KillsBBs.test(SuccIdx))
+    if (Kills.count(SuccMBB))
       return true;
   }
 
