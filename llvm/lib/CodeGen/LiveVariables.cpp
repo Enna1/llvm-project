@@ -790,22 +790,20 @@ bool LiveVariables::VarInfo::isLiveIn(const MachineBasicBlock &MBB,
 bool LiveVariables::isLiveOut(Register Reg, const MachineBasicBlock &MBB) {
   LiveVariables::VarInfo &VI = getVarInfo(Reg);
 
-  SmallPtrSet<const MachineBasicBlock *, 8> Kills;
-  Kills.reserve(VI.Kills.size());
-  for (MachineInstr *MI : VI.Kills)
-    Kills.insert(MI->getParent());
-
   // Loop over all of the successors of the basic block, checking to see if
   // the value is either live in the block, or if it is killed in the block.
+  SmallPtrSet<const MachineBasicBlock *, 4> Succs;
   for (const MachineBasicBlock *SuccMBB : MBB.successors()) {
     // Is it alive in this successor?
     unsigned SuccIdx = SuccMBB->getNumber();
     if (VI.AliveBlocks.test(SuccIdx))
       return true;
-    // Or is it live because there is a use in a successor that kills it?
-    if (Kills.count(SuccMBB))
-      return true;
+    Succs.insert(SuccMBB);
   }
+  // Or is it live because there is a use in a successor that kills it?
+  for (MachineInstr *MI : VI.Kills)
+    if (Succs.contains(MI->getParent()))
+      return true;
 
   return false;
 }
