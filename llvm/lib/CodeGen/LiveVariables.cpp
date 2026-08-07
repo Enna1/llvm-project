@@ -791,6 +791,7 @@ bool LiveVariables::isLiveOut(Register Reg, const MachineBasicBlock &MBB) {
   LiveVariables::VarInfo &VI = getVarInfo(Reg);
 
   SmallPtrSet<const MachineBasicBlock *, 8> Kills;
+  Kills.reserve(VI.Kills.size());
   for (MachineInstr *MI : VI.Kills)
     Kills.insert(MI->getParent());
 
