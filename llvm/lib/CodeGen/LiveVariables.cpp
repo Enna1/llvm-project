@@ -860,19 +860,25 @@ void LiveVariables::addNewBlock(MachineBasicBlock *BB,
 
 /// addNewBlock - Add a new basic block BB as an empty succcessor to DomBB. All
 /// variables that are live out of DomBB will be marked as passing live through
-/// BB. LiveInSets[BB] is *not* updated (because it is not needed during
-/// PHIElimination).
+/// BB. LiveInSets[BB] is also updated to the new block's live-in set, so the
+/// table stays accurate across edge splits and can be shared/reused.
 void LiveVariables::addNewBlock(MachineBasicBlock *BB,
                                 MachineBasicBlock *DomBB,
                                 MachineBasicBlock *SuccBB,
                                 std::vector<SparseBitVector<>> &LiveInSets) {
   const unsigned NumNew = BB->getNumber();
 
+  if (NumNew >= LiveInSets.size())
+    LiveInSets.resize(NumNew + 1);
+
+  SparseBitVector<> &NewBV = LiveInSets[NumNew];
+
   SparseBitVector<> &BV = LiveInSets[SuccBB->getNumber()];
   for (unsigned R : BV) {
     Register VirtReg = Register::index2VirtReg(R);
     LiveVariables::VarInfo &VI = getVarInfo(VirtReg);
     VI.AliveBlocks.set(NumNew);
+    NewBV.set(R);
   }
   // All registers used by PHI nodes in SuccBB must be live through BB.
   for (MachineBasicBlock::iterator BBI = SuccBB->begin(),
@@ -880,8 +886,11 @@ void LiveVariables::addNewBlock(MachineBasicBlock *BB,
        BBI != BBE && BBI->isPHI(); ++BBI) {
     for (unsigned i = 1, e = BBI->getNumOperands(); i != e; i += 2)
       if (BBI->getOperand(i + 1).getMBB() == BB &&
-          BBI->getOperand(i).readsReg())
-        getVarInfo(BBI->getOperand(i).getReg())
-          .AliveBlocks.set(NumNew);
+          BBI->getOperand(i).readsReg()) {
+        Register R = BBI->getOperand(i).getReg();
+        getVarInfo(R).AliveBlocks.set(NumNew);
+        if (R.isVirtual())
+          NewBV.set(R.virtRegIndex());
+      }
   }
 }

@@ -108,6 +108,11 @@ class PHIEliminationImpl {
   bool isLiveIn(Register Reg, const MachineBasicBlock *MBB);
   bool isLiveOutPastPHIs(Register Reg, const MachineBasicBlock *MBB);
 
+  std::vector<SparseBitVector<>> LiveInSets;
+  void buildLiveInSets(MachineFunction &MF);
+  void refreshLiveInForReg(Register Reg);
+  bool isLiveOutViaLiveIn(Register Reg, const MachineBasicBlock &MBB) const;
+
   using BBVRegPair = std::pair<unsigned, Register>;
   using VRegPHIUse = DenseMap<BBVRegPair, unsigned>;
 
@@ -241,37 +246,11 @@ bool PHIEliminationImpl::run(MachineFunction &MF) {
 
   bool Changed = false;
 
+  if (LV)
+    buildLiveInSets(MF);
+
   // Split critical edges to help the coalescer.
   if (!DisableEdgeSplitting && (LV || LIS)) {
-    // A set of live-in regs for each MBB which is used to update LV
-    // efficiently also with large functions.
-    std::vector<SparseBitVector<>> LiveInSets;
-    if (LV) {
-      LiveInSets.resize(MF.size());
-      for (unsigned Index = 0, e = MRI->getNumVirtRegs(); Index != e; ++Index) {
-        // Set the bit for this register for each MBB where it is
-        // live-through or live-in (killed).
-        Register VirtReg = Register::index2VirtReg(Index);
-        MachineInstr *DefMI = MRI->getVRegDef(VirtReg);
-        if (!DefMI)
-          continue;
-        LiveVariables::VarInfo &VI = LV->getVarInfo(VirtReg);
-        SparseBitVector<>::iterator AliveBlockItr = VI.AliveBlocks.begin();
-        SparseBitVector<>::iterator EndItr = VI.AliveBlocks.end();
-        while (AliveBlockItr != EndItr) {
-          unsigned BlockNum = *(AliveBlockItr++);
-          LiveInSets[BlockNum].set(Index);
-        }
-        // The register is live into an MBB in which it is killed but not
-        // defined. See comment for VarInfo in LiveVariables.h.
-        MachineBasicBlock *DefMBB = DefMI->getParent();
-        if (VI.Kills.size() > 1 ||
-            (!VI.Kills.empty() && VI.Kills.front()->getParent() != DefMBB))
-          for (auto *MI : VI.Kills)
-            LiveInSets[MI->getParent()->getNumber()].set(Index);
-      }
-    }
-
     for (auto &MBB : MF)
       Changed |=
           SplitPHIEdges(MF, MBB, MLI, (LV ? &LiveInSets : nullptr), MDTU);
@@ -308,10 +287,65 @@ bool PHIEliminationImpl::run(MachineFunction &MF) {
   LoweredPHIs.clear();
   ImpDefs.clear();
   VRegPHIUseCount.clear();
+  LiveInSets.clear();
 
   MF.getProperties().setNoPHIs();
 
   return Changed;
+}
+
+void PHIEliminationImpl::buildLiveInSets(MachineFunction &MF) {
+  LiveInSets.assign(MF.getNumBlockIDs(), SparseBitVector<>());
+  if (!LV)
+    return;
+  for (unsigned Index = 0, e = MRI->getNumVirtRegs(); Index != e; ++Index) {
+    Register VirtReg = Register::index2VirtReg(Index);
+    MachineInstr *DefMI = MRI->getVRegDef(VirtReg);
+    if (!DefMI)
+      continue;
+    LiveVariables::VarInfo &VI = LV->getVarInfo(VirtReg);
+    for (unsigned BlockNum : VI.AliveBlocks)
+      LiveInSets[BlockNum].set(Index);
+    MachineBasicBlock *DefMBB = DefMI->getParent();
+    if (VI.Kills.size() > 1 ||
+        (!VI.Kills.empty() && VI.Kills.front()->getParent() != DefMBB))
+      for (auto *MI : VI.Kills)
+        LiveInSets[MI->getParent()->getNumber()].set(Index);
+  }
+}
+
+bool PHIEliminationImpl::isLiveOutViaLiveIn(
+    Register Reg, const MachineBasicBlock &MBB) const {
+  unsigned Idx = Reg.virtRegIndex();
+  for (const MachineBasicBlock *Succ : MBB.successors()) {
+    unsigned SN = Succ->getNumber();
+    if (SN < LiveInSets.size() && LiveInSets[SN].test(Idx))
+      return true;
+  }
+  return false;
+}
+
+void PHIEliminationImpl::refreshLiveInForReg(Register Reg) {
+  unsigned Idx = Reg.virtRegIndex();
+  for (SparseBitVector<> &BV : LiveInSets)
+    BV.reset(Idx);
+  if (!LV)
+    return;
+  MachineInstr *DefMI = MRI->getVRegDef(Reg);
+  if (!DefMI)
+    return;
+  LiveVariables::VarInfo &VI = LV->getVarInfo(Reg);
+  for (unsigned BlockNum : VI.AliveBlocks)
+    if (BlockNum < LiveInSets.size())
+      LiveInSets[BlockNum].set(Idx);
+  MachineBasicBlock *DefMBB = DefMI->getParent();
+  if (VI.Kills.size() > 1 ||
+      (!VI.Kills.empty() && VI.Kills.front()->getParent() != DefMBB))
+    for (auto *MI : VI.Kills) {
+      unsigned BN = MI->getParent()->getNumber();
+      if (BN < LiveInSets.size())
+        LiveInSets[BN].set(Idx);
+    }
 }
 
 /// EliminatePHINodes - Eliminate phi nodes by inserting copy instructions in
@@ -643,7 +677,7 @@ void PHIEliminationImpl::LowerPHINode(MachineBasicBlock &MBB,
     // out of the predecessor. We can also ignore undef sources.
     if (LV && !SrcUndef &&
         !VRegPHIUseCount[BBVRegPair(opBlock.getNumber(), SrcReg)] &&
-        !LV->isLiveOut(SrcReg, opBlock)) {
+        !isLiveOutViaLiveIn(SrcReg, opBlock)) {
       // We want to be able to insert a kill of the register if this PHI (aka,
       // the copy we just inserted) is the last use of the source value. Live
       // variable analysis conservatively handles this by saying that the value
@@ -696,12 +730,15 @@ void PHIEliminationImpl::LowerPHINode(MachineBasicBlock &MBB,
       LV->getVarInfo(SrcReg).AliveBlocks.reset(opBlockNum);
     } else if (LV && SrcUndef &&
                !VRegPHIUseCount[BBVRegPair(opBlock.getNumber(), SrcReg)] &&
-               !LV->isLiveOut(SrcReg, opBlock)) {
+               !isLiveOutViaLiveIn(SrcReg, opBlock)) {
       // For undef sources we don't need a kill marker, but the register may
       // no longer be live through intermediate blocks after the PHI use is
       // removed. Recompute its LiveVariables info to clear stale AliveBlocks.
-      if (MRI->getVRegDef(SrcReg))
+      if (MRI->getVRegDef(SrcReg)) {
         LV->recomputeForSingleDefVirtReg(SrcReg);
+        if (!LiveInSets.empty())
+          refreshLiveInForReg(SrcReg);
+      }
     }
 
     if (SI && NewSrcInstr)
