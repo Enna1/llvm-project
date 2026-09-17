@@ -13,7 +13,6 @@
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
@@ -417,20 +416,15 @@ protected:
   /// Keep track of values which map to a pointer base and constant offset.
   DenseMap<Value *, std::pair<Value *, APInt>> ConstantOffsetPtrs;
 
-  /// Keep track of dead blocks due to the constant arguments.
-  SmallBitVector DeadBlocks;
-  unsigned NumDeadBlocks = 0;
+  /// Keep track of blocks reached by the cost analysis.
+  SmallSetVector<BasicBlock *, 16> LiveBlocks;
+
+  /// Cache CFG reachability under the currently known successors.
+  SmallSetVector<BasicBlock *, 16> PotentiallyLiveBlocks;
 
   /// The mapping of the blocks to their known unique successors due to the
   /// constant arguments.
-  SmallVector<BasicBlock *, 16> KnownSuccessors;
-
-  static constexpr unsigned InvalidLivePredCount = ~0U;
-
-  /// Keep track of the number of incoming CFG edges that are not known dead.
-  /// This is indexed by BasicBlock::getNumber(), populated lazily, and updated
-  /// as KnownSuccessors and DeadBlocks grow.
-  SmallVector<unsigned, 16> LivePredCounts;
+  DenseMap<BasicBlock *, BasicBlock *> KnownSuccessors;
 
   /// Model the elimination of repeated loads that is expected to happen
   /// whenever we simplify away the stores that would otherwise cause them to be
@@ -442,34 +436,25 @@ protected:
 
   SmallPtrSet<Value *, 16> LoadAddrSet;
 
-  void ensureBlockState() {
-    if (!LivePredCounts.empty())
-      return;
-
-    unsigned MaxBlockNumber = F.getMaxBlockNumber();
-    DeadBlocks.resize(MaxBlockNumber, false);
-    KnownSuccessors.resize(MaxBlockNumber, nullptr);
-    LivePredCounts.resize(MaxBlockNumber, InvalidLivePredCount);
-  }
-
-  bool isBlockDead(BasicBlock *BB) const {
-    unsigned BlockNumber = BB->getNumber();
-    return BlockNumber < DeadBlocks.size() && DeadBlocks[BlockNumber];
-  }
-
-  void markBlockDead(unsigned BlockNumber) {
-    assert(BlockNumber < DeadBlocks.size() && "Unexpected basic block number.");
-    if (!DeadBlocks[BlockNumber]) {
-      DeadBlocks[BlockNumber] = true;
-      ++NumDeadBlocks;
-    }
-  }
-
   BasicBlock *getKnownSuccessor(BasicBlock *BB) const {
-    unsigned BlockNumber = BB->getNumber();
-    if (BlockNumber >= KnownSuccessors.size())
-      return nullptr;
-    return KnownSuccessors[BlockNumber];
+    return KnownSuccessors.lookup(BB);
+  }
+
+  bool isBlockDead(BasicBlock *BB) {
+    if (KnownSuccessors.empty())
+      return false;
+    if (PotentiallyLiveBlocks.empty()) {
+      PotentiallyLiveBlocks.insert(&F.getEntryBlock());
+      for (unsigned I = 0; I != PotentiallyLiveBlocks.size(); ++I) {
+        BasicBlock *Current = PotentiallyLiveBlocks[I];
+        if (BasicBlock *KnownSuccessor = getKnownSuccessor(Current)) {
+          PotentiallyLiveBlocks.insert(KnownSuccessor);
+          continue;
+        }
+        PotentiallyLiveBlocks.insert_range(successors(Current));
+      }
+    }
+    return !PotentiallyLiveBlocks.contains(BB);
   }
 
   AllocaInst *getSROAArgForValueOrNull(Value *V) const {
@@ -491,7 +476,6 @@ protected:
   bool isAllocaDerivedArg(Value *V);
   void disableSROAForArg(AllocaInst *SROAArg);
   void disableSROA(Value *V);
-  void findDeadBlocks(BasicBlock *CurrBB, BasicBlock *NextBB);
   void disableLoadElimination();
   bool isGEPFree(GetElementPtrInst &GEP);
   bool canFoldInboundsGEP(GetElementPtrInst &I);
@@ -1443,7 +1427,7 @@ private:
                   InlineConstants::LoopPenalty);
       }
     }
-    set(InlineCostFeatureIndex::dead_blocks, NumDeadBlocks);
+    set(InlineCostFeatureIndex::dead_blocks, F.size() - LiveBlocks.size());
     set(InlineCostFeatureIndex::simplified_instructions,
         NumInstructionsSimplified);
     set(InlineCostFeatureIndex::constant_args, NumConstantArgs);
@@ -2906,73 +2890,6 @@ ConstantInt *CallAnalyzer::stripAndComputeInBoundsConstantOffsets(Value *&V) {
   return cast<ConstantInt>(ConstantInt::get(IdxPtrTy, Offset));
 }
 
-/// Find dead blocks due to deleted CFG edges during inlining.
-///
-/// If we know the successor of the current block, \p CurrBB, has to be \p
-/// NextBB, the other successors of \p CurrBB are dead if these successors have
-/// no live incoming CFG edges.  If one block is found to be dead, we can
-/// continue growing the dead block list by checking the successors of the dead
-/// blocks to see if all their incoming edges are dead or not.
-void CallAnalyzer::findDeadBlocks(BasicBlock *CurrBB, BasicBlock *NextBB) {
-  ensureBlockState();
-
-  unsigned CurrNumber = CurrBB->getNumber();
-  assert(CurrNumber < KnownSuccessors.size() &&
-         "Unexpected basic block number.");
-
-  auto GetLivePredCount = [&](BasicBlock *BB) -> unsigned & {
-    unsigned BlockNumber = BB->getNumber();
-    assert(BlockNumber < LivePredCounts.size() &&
-           "Unexpected basic block number.");
-    unsigned &LivePredCount = LivePredCounts[BlockNumber];
-    // The first deletion of an incoming edge initializes this count. All
-    // subsequent edge deletions are reflected incrementally by MarkEdgeDead.
-    if (LivePredCount == InvalidLivePredCount)
-      LivePredCount = pred_size(BB);
-    return LivePredCount;
-  };
-
-  SmallVector<BasicBlock *, 4> NewDead;
-
-  auto MarkEdgeDead = [&](BasicBlock *Succ) {
-    if (isBlockDead(Succ))
-      return;
-    unsigned &LivePredCount = GetLivePredCount(Succ);
-    assert(LivePredCount > 0 && "Cannot remove a non-live CFG edge.");
-    if (--LivePredCount == 0)
-      NewDead.push_back(Succ);
-  };
-
-  if (DeadBlocks[CurrNumber])
-    return;
-
-  BasicBlock *KnownSucc = KnownSuccessors[CurrNumber];
-  if (KnownSucc) {
-    assert(KnownSucc == NextBB && "Conflicting known successor.");
-    return;
-  }
-
-  for (BasicBlock *Succ : successors(CurrBB))
-    if (Succ != NextBB)
-      MarkEdgeDead(Succ);
-  KnownSuccessors[CurrNumber] = NextBB;
-
-  while (!NewDead.empty()) {
-    BasicBlock *Dead = NewDead.pop_back_val();
-    if (isBlockDead(Dead))
-      continue;
-
-    // When a block becomes dead, all CFG edges that were still live out of the
-    // block become dead as well.
-    BasicBlock *KnownSucc = getKnownSuccessor(Dead);
-    for (BasicBlock *Succ : successors(Dead))
-      if (!KnownSucc || Succ == KnownSucc)
-        MarkEdgeDead(Succ);
-
-    markBlockDead(Dead->getNumber());
-  }
-}
-
 /// Analyze a call site for potential inlining.
 ///
 /// Returns true if inlining this call is viable, and false if it is not
@@ -3042,16 +2959,14 @@ InlineResult CallAnalyzer::analyze() {
   // basic blocks in a breadth-first order as we insert live successors. To
   // accomplish this, prioritizing for small iterations because we exit after
   // crossing our threshold, we use a small-size optimized SetVector.
-  typedef SmallSetVector<BasicBlock *, 16> BBSetVector;
-  BBSetVector BBWorklist;
-  BBWorklist.insert(&F.getEntryBlock());
+  LiveBlocks.insert(&F.getEntryBlock());
 
   // Note that we *must not* cache the size, this loop grows the worklist.
-  for (unsigned Idx = 0; Idx != BBWorklist.size(); ++Idx) {
+  for (unsigned Idx = 0; Idx != LiveBlocks.size(); ++Idx) {
     if (shouldStop())
       break;
 
-    BasicBlock *BB = BBWorklist[Idx];
+    BasicBlock *BB = LiveBlocks[Idx];
     if (BB->empty())
       continue;
 
@@ -3082,23 +2997,25 @@ InlineResult CallAnalyzer::analyze() {
       Value *Cond = BI->getCondition();
       if (ConstantInt *SimpleCond = getSimplifiedValue<ConstantInt>(Cond)) {
         BasicBlock *NextBB = BI->getSuccessor(SimpleCond->isZero() ? 1 : 0);
-        BBWorklist.insert(NextBB);
-        findDeadBlocks(BB, NextBB);
+        LiveBlocks.insert(NextBB);
+        KnownSuccessors[BB] = NextBB;
+        PotentiallyLiveBlocks.clear();
         continue;
       }
     } else if (SwitchInst *SI = dyn_cast<SwitchInst>(TI)) {
       Value *Cond = SI->getCondition();
       if (ConstantInt *SimpleCond = getSimplifiedValue<ConstantInt>(Cond)) {
         BasicBlock *NextBB = SI->findCaseValue(SimpleCond)->getCaseSuccessor();
-        BBWorklist.insert(NextBB);
-        findDeadBlocks(BB, NextBB);
+        LiveBlocks.insert(NextBB);
+        KnownSuccessors[BB] = NextBB;
+        PotentiallyLiveBlocks.clear();
         continue;
       }
     }
 
     // If we're unable to select a particular successor, just count all of
     // them.
-    BBWorklist.insert_range(successors(BB));
+    LiveBlocks.insert_range(successors(BB));
 
     onBlockAnalyzed(BB);
   }
